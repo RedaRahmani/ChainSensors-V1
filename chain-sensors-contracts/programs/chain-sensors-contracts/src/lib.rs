@@ -48,4 +48,32 @@ pub mod chainsensors {
             expires_at,
         )
     }
+    pub fn create_listing(
+        ctx: Context<CreateListing>,
+        data_cid: String,
+        price_per_unit: u64,
+        total_data_units: u64,
+        device_id: String,
+        access_key_hash: [u8; 32],
+        ek_pubkey_hash: [u8; 32],
+        bump: u8,
+    ) -> Result<()> {
+        CreateListing::handler(
+            ctx,
+            data_cid,
+            price_per_unit,
+            total_data_units,
+            device_id,
+            access_key_hash,
+            ek_pubkey_hash,
+            bump,
+        )
+    }
+
+    pub fn cancel_listing(
+        ctx: Context<CancelListing>,
+        device_id: String,
+    ) -> Result<()> {
+        CancelListing::handler(ctx, device_id)
+    }
 }
