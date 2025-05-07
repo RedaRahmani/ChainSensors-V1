@@ -1,14 +1,3 @@
-// import { Module } from '@nestjs/common';
-// import { MongooseModule } from '@nestjs/mongoose';
-// import { Reading, ReadingSchema } from './reading.schema';
-
-// @Module({
-//   imports: [
-//     MongooseModule.forFeature([{ name: Reading.name, schema: ReadingSchema }]),
-//   ],
-//   exports: [MongooseModule]
-// })
-// export class ReadingModule {}
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Reading, ReadingSchema } from './reading.schema';

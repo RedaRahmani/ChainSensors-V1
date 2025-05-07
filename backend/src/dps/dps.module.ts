@@ -10,6 +10,6 @@ import { Device, DeviceSchema } from './device.schema';
   imports: [WalrusModule, SolanaModule, MongooseModule.forFeature([{ name: Device.name, schema: DeviceSchema }]),],
   controllers: [DpsController],
   providers: [DpsService],
-  exports: [DpsService], // Export for Registry/Ingestion access
+  exports: [DpsService],
 })
 export class DpsModule {}
