@@ -1,7 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as anchor from '@coral-xyz/anchor';
-import { PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY } from '@solana/web3.js';
+import {
+  PublicKey,
+  SystemProgram,
+  SYSVAR_RENT_PUBKEY,
+  Transaction,
+} from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import idl from './idl.json';
 import { Idl } from '@coral-xyz/anchor';
@@ -29,8 +34,7 @@ export class SolanaService {
     const programIdStr = this.configService.get<string>('SOLANA_PROGRAM_ID');
     if (!programIdStr) throw new Error('SOLANA_PROGRAM_ID not set');
     const programId = new PublicKey(programIdStr);
-    this.program = new anchor.Program(idl as Idl,this.provider);
-
+    this.program = new anchor.Program(idl as Idl, this.provider);
   }
 
   /**
@@ -62,10 +66,10 @@ export class SolanaService {
 
     // Check if already initialized
     try {
-      await (this.program.account as any)["marketplace"].fetch(marketplacePda);
+      await (this.program.account as any)['marketplace'].fetch(marketplacePda);
       this.logger.log('Marketplace already initialized at ' + marketplacePda.toBase58());
       return;
-    } catch (err) {
+    } catch {
       this.logger.log('Marketplace not found, proceeding with initialization');
     }
 
@@ -78,14 +82,28 @@ export class SolanaService {
         admin: adminPubkey,
         marketplace: marketplacePda,
         treasury: treasuryPda,
-        usdcMint: usdcMint,
+        usdcMint,
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         rent: SYSVAR_RENT_PUBKEY,
       })
-      .rpc();
+      .transaction();
 
-    this.logger.log(`Marketplace initialized (tx: ${tx}) at PDA ${marketplacePda.toBase58()}`);
+    this.logger.log(
+      `Marketplace initialized (tx: ${tx}) at PDA ${marketplacePda.toBase58()}`
+    );
+  }
+
+  /** Helper: build, attach blockhash/fee, serialize & base64-encode */
+  private async buildUnsignedTx(
+    txBuilder: Promise<Transaction>
+  ): Promise<string> {
+    const tx = await txBuilder;
+    const { blockhash } = await this.provider.connection.getLatestBlockhash();
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = this.provider.wallet.publicKey;
+    const serialized = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
+    return serialized.toString('base64');
   }
 
   /**
@@ -104,140 +122,128 @@ export class SolanaService {
     accessKeyHash: number[],
     expiresAt: number | null,
     marketplaceAdmin: PublicKey,
-  ): Promise<string> {
+  ): Promise<{ unsignedTx: string }> {
     try {
       const programId = this.program.programId;
-
-      // Marketplace PDA
       const [marketplacePda] = PublicKey.findProgramAddressSync(
         [Buffer.from('marketplace'), marketplaceAdmin.toBuffer()],
         programId,
       );
-
-      // Device registry PDA (seed: 16-byte hex UUID)
-      const rawHex = deviceId.replace(/-/g, '');
-      const seedBytes = Buffer.from(rawHex, 'hex');
-      this.logger.debug(`Seed lengths: device(6), marketplace(${marketplacePda.toBuffer().length}), id(${seedBytes.length})`);
-
-
-      // after marketplacePda…
-      const deviceSeed = Buffer.from(deviceId);           // 32‑byte ASCII hex string
+      const deviceSeed = Buffer.from(deviceId);
       const [deviceRegistryPda] = PublicKey.findProgramAddressSync(
-        [ Buffer.from('device'), marketplacePda.toBuffer(), deviceSeed ],
-        this.program.programId,
+        [Buffer.from('device'), marketplacePda.toBuffer(), deviceSeed],
+        programId,
       );
 
-      
-      this.logger.debug(`Seed lengths → device tag: 6, marketplace: ${marketplacePda.toBuffer().length}, id: ${seedBytes.length}`);
-      this.logger.debug('Calling registerDevice with dataCid=' + dataCid);
+      this.logger.debug(
+        `Calling registerDevice with dataCid=${dataCid}`
+      );
 
-      // Call registerDevice instruction
-      const tx = await this.program.methods
-        .registerDevice(
-          deviceId,
-          Uint8Array.from(ekPubkeyHash) as any,
-          deviceType,
-          location,
-          dataType,
-          dataUnit,
-          new anchor.BN(pricePerUnit),
-          new anchor.BN(totalDataUnits),
-          dataCid,
-          Uint8Array.from(accessKeyHash) as any,
-          expiresAt ? new anchor.BN(expiresAt) : null,
-        )
-        .accounts({
-          owner: this.provider.wallet.publicKey,
-          marketplace: marketplacePda,
-          deviceRegistry: deviceRegistryPda,
-          systemProgram: SystemProgram.programId,
-          rent: SYSVAR_RENT_PUBKEY,
-        })
-        .rpc();
+      const unsignedTx = await this.buildUnsignedTx(
+        this.program.methods
+          .registerDevice(
+            deviceId,
+            Uint8Array.from(ekPubkeyHash) as any,
+            deviceType,
+            location,
+            dataType,
+            dataUnit,
+            new anchor.BN(pricePerUnit),
+            new anchor.BN(totalDataUnits),
+            dataCid,
+            Uint8Array.from(accessKeyHash) as any,
+            expiresAt ? new anchor.BN(expiresAt) : null,
+          )
+          .accounts({
+            owner: this.provider.wallet.publicKey,
+            marketplace: marketplacePda,
+            deviceRegistry: deviceRegistryPda,
+            systemProgram: SystemProgram.programId,
+            rent: SYSVAR_RENT_PUBKEY,
+          })
+          .transaction()
+      );
 
-      this.logger.log(`Device registered with signature: ${tx}`);
-      return tx;
+      this.logger.log(`Built unsigned registerDevice tx for ${deviceId}`);
+      return { unsignedTx };
     } catch (error) {
       this.logger.error(`Failed to register device: ${error}`);
-      if ((error as any).logs) {
-        this.logger.error('Simulation logs:\n' + (error as any).logs.join('\n'));
-      }
       throw error;
     }
   }
 
-    /**
+  /**
    * Create a new on‑chain listing.
    */
-    async createListing(
-      listingId: string,
-      dataCid: string,
-      pricePerUnit: number,
-      totalDataUnits: number,
-      deviceId: string,
-    ): Promise<string> {
-      const programId = this.program.programId;
-      const seller = this.provider.wallet.publicKey;
-    
-      // PDAs
-      const [marketplace] = PublicKey.findProgramAddressSync(
-        [Buffer.from('marketplace'), seller.toBuffer()],
-        programId,
-      );
-      const [deviceRegistry] = PublicKey.findProgramAddressSync(
-        [Buffer.from('device'), marketplace.toBuffer(), Buffer.from(deviceId)],
-        programId,
-      );
-      const [listingState, bump] = PublicKey.findProgramAddressSync(
-        [Buffer.from('listing'), deviceRegistry.toBuffer(), Buffer.from(listingId)],
-        programId,
-      );
-    
-      const tx = await this.program.methods
+  async createListing(
+    listingId: string,
+    dataCid: string,
+    pricePerUnit: number,
+    totalDataUnits: number,
+    deviceId: string,
+  ): Promise<{ unsignedTx: string }> {
+    const programId = this.program.programId;
+    const seller = this.provider.wallet.publicKey;
+    const [marketplace] = PublicKey.findProgramAddressSync(
+      [Buffer.from('marketplace'), seller.toBuffer()],
+      programId,
+    );
+    const [deviceRegistry] = PublicKey.findProgramAddressSync(
+      [Buffer.from('device'), marketplace.toBuffer(), Buffer.from(deviceId)],
+      programId,
+    );
+    const [listingState, bump] = PublicKey.findProgramAddressSync(
+      [Buffer.from('listing'), deviceRegistry.toBuffer(), Buffer.from(listingId)],
+      programId,
+    );
+
+    const unsignedTx = await this.buildUnsignedTx(
+      this.program.methods
         .createListing(
           dataCid,
           new anchor.BN(pricePerUnit),
           new anchor.BN(totalDataUnits),
           listingId,
-          Array(32).fill(0), // placeholder access_key_hash
-          Array(32).fill(0), // placeholder ek_pubkey_hash
+          Array(32).fill(0),
+          Array(32).fill(0),
           bump,
         )
         .accounts({
           seller,
           marketplace,
           deviceRegistry,
-          listingState,              // ← must match your IDL!
+          listingState,
           systemProgram: SystemProgram.programId,
-          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+          rent: SYSVAR_RENT_PUBKEY,
         })
-        .rpc();
-    
-      this.logger.log(`createListing tx: ${tx}`);
-      return tx;
-    }
-    
-    async cancelListing(
-      listingId: string,
-      deviceId: string,
-    ): Promise<string> {
-      const programId = this.program.programId;
-      const seller = this.provider.wallet.publicKey;
-    
-      const [marketplace] = PublicKey.findProgramAddressSync(
-        [Buffer.from('marketplace'), seller.toBuffer()],
-        programId,
-      );
-      const [deviceRegistry] = PublicKey.findProgramAddressSync(
-        [Buffer.from('device'), marketplace.toBuffer(), Buffer.from(deviceId)],
-        programId,
-      );
-      const [listingState] = PublicKey.findProgramAddressSync(
-        [Buffer.from('listing'), deviceRegistry.toBuffer(), Buffer.from(listingId)],
-        programId,
-      );
-    
-      const tx = await this.program.methods
+        .transaction()
+    );
+
+    this.logger.log(`Built unsigned createListing tx ${listingId}`);
+    return { unsignedTx };
+  }
+
+  async cancelListing(
+    listingId: string,
+    deviceId: string,
+  ): Promise<{ unsignedTx: string }> {
+    const programId = this.program.programId;
+    const seller = this.provider.wallet.publicKey;
+    const [marketplace] = PublicKey.findProgramAddressSync(
+      [Buffer.from('marketplace'), seller.toBuffer()],
+      programId,
+    );
+    const [deviceRegistry] = PublicKey.findProgramAddressSync(
+      [Buffer.from('device'), marketplace.toBuffer(), Buffer.from(deviceId)],
+      programId,
+    );
+    const [listingState] = PublicKey.findProgramAddressSync(
+      [Buffer.from('listing'), deviceRegistry.toBuffer(), Buffer.from(listingId)],
+      programId,
+    );
+
+    const unsignedTx = await this.buildUnsignedTx(
+      this.program.methods
         .cancelListing(listingId)
         .accounts({
           seller,
@@ -245,10 +251,10 @@ export class SolanaService {
           deviceRegistry,
           systemProgram: SystemProgram.programId,
         })
-        .rpc();
-    
-      this.logger.log(`cancelListing tx: ${tx}`);
-      return tx;
-    }
-    
+        .transaction()
+    );
+
+    this.logger.log(`Built unsigned cancelListing tx ${listingId}`);
+    return { unsignedTx };
+  }
 }

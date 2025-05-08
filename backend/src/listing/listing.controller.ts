@@ -17,18 +17,32 @@ import { CancelListingDto } from './dto/cancel-listing.dto';
 export class ListingController {
   constructor(private readonly listingService: ListingService) {}
 
+  /**
+   * Build an unsigned createListing tx and return it with listingId
+   */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  create(@Body() dto: CreateListingDto) {
-    return this.listingService.createListing(dto);
+  async create(@Body() dto: CreateListingDto) {
+    const { listingId, unsignedTx } = await this.listingService.createListing(dto);
+    return { listingId, unsignedTx };
   }
 
+  /**
+   * Build an unsigned cancelListing tx and return it
+   */
   @Delete()
   @HttpCode(HttpStatus.OK)
-  cancel(@Body() dto: CancelListingDto) {
-    return this.listingService.cancelListing(dto.deviceId, dto.listingId);
+  async cancel(@Body() dto: CancelListingDto) {
+    const { unsignedTx } = await this.listingService.cancelListing(
+      dto.deviceId,
+      dto.listingId
+    );
+    return { unsignedTx };
   }
 
+  /**
+   * List all listings for a device
+   */
   @Get(':deviceId')
   list(@Param('deviceId') deviceId: string) {
     return this.listingService.findByDevice(deviceId);

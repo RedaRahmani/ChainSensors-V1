@@ -62,9 +62,9 @@ export class DpsService {
    * 1) verify CSR
    * 2) sign cert
    * 3) upload metadata
-   * 4) register on Solana
-   * 5) store in Mongo
-   * 6) return onboarding info + certificate
+   * 4) build unsigned on-chain tx
+   * 5) store metadata and cert
+   * 6) return device info + unsignedTx + certificate
    */
   async enrollDevice(csrPem: string, metadata: EnrollMetadata) {
     // parse & verify CSR
@@ -108,8 +108,8 @@ export class DpsService {
     const loc = metadata.location;
     const fd = metadata.dataTypes[0] || { type: '', units: '', frequency: '' };
 
-    this.logger.log(`Registering device ${deviceId} on-chain`);
-    const txSignature = await this.solanaService.registerDevice(
+    this.logger.log(`Building unsigned tx for registering device ${deviceId}`);
+    const { unsignedTx } = await this.solanaService.registerDevice(
       deviceId,
       Array.from(ekHash),
       metadata.model,
@@ -123,21 +123,17 @@ export class DpsService {
       metadata.expiresAt ?? null,
       this.marketplaceAdmin,
     );
-    const exists = await this.deviceModel.findOne({ deviceId });
-    if (exists) {
-      throw new BadRequestException(`Device ${deviceId} already enrolled`);
-    }
-    // persist
+
+    // persist metadata & cert
     await this.deviceModel.create({
       deviceId,
       metadataCid,
-      txSignature,
       lastSeen: new Date(),
       latestDataCid: null,
-      certificatePem, // store for reference
+      certificatePem,
     });
 
-    return { deviceId, brokerUrl: this.brokerUrl, txSignature, certificatePem };
+    return { deviceId, brokerUrl: this.brokerUrl, unsignedTx, certificatePem };
   }
 
   async updateLastSeen(deviceId: string, dataCid: string) {

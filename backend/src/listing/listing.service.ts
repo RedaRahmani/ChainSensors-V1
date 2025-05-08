@@ -18,8 +18,17 @@ export class ListingService {
     private readonly solanaService: SolanaService,
   ) {}
 
-  async createListing(dto: CreateListingDto): Promise<{ txSignature: string }> {
-    // 1) Fetch device record (includes latestDataCid + metadata)
+  /**
+   * Create a new listing:
+   * 1) fetch device metadata
+   * 2) build unsigned transaction
+   * 3) mirror to Mongo (store listing data without signature)
+   * 4) return listingId and unsignedTx
+   */
+  async createListing(
+    dto: CreateListingDto
+  ): Promise<{ listingId: string; unsignedTx: string }> {
+    // 1) Fetch device record
     const device = await this.dpsService.getDevice(dto.deviceId);
     if (!device) throw new NotFoundException(`Device ${dto.deviceId} not found`);
     const dataCid = device.latestDataCid;
@@ -27,17 +36,19 @@ export class ListingService {
       throw new NotFoundException(`No data available yet for device ${dto.deviceId}`);
     }
 
-    // 2) Prepare on‐chain call
+    // prepare listingId
     const listingId = uuidv4().replace(/-/g, '');
-    const txSignature = await this.solanaService.createListing(
+
+    // 2) Build unsigned Tx
+    const { unsignedTx } = await this.solanaService.createListing(
       listingId,
       dataCid,
       dto.pricePerUnit,
       dto.totalDataUnits,
-      dto.deviceId,
+      dto.deviceId
     );
 
-    // 3) Mirror to Mongo
+    // 3) Mirror to Mongo: store listing info, status Active
     await this.listingModel.create({
       listingId,
       deviceId: dto.deviceId,
@@ -45,29 +56,45 @@ export class ListingService {
       pricePerUnit: dto.pricePerUnit,
       totalDataUnits: dto.totalDataUnits,
       status: 'Active',
-      txSignature,
+      // Note: we no longer store server-side signature
     });
 
-    this.logger.log(`Listing ${listingId} created on‑chain and in Mongo`);
-    return { txSignature };
+    this.logger.log(`Prepared listing ${listingId} (unsignedTx built)`);
+    return { listingId, unsignedTx };
   }
 
-  async cancelListing(deviceId: string, listingId: string): Promise<{ txSignature: string }> {
+  /**
+   * Cancel an existing listing:
+   * 1) verify listing exists
+   * 2) build unsigned cancellation tx
+   * 3) update status in Mongo
+   * 4) return unsignedTx
+   */
+  async cancelListing(
+    deviceId: string,
+    listingId: string
+  ): Promise<{ unsignedTx: string }> {
     // 1) Local existence
     const listing = await this.listingModel.findOne({ listingId, deviceId });
     if (!listing) throw new NotFoundException(`Listing ${listingId} not found`);
 
-    // 2) On‑chain cancel
-    const txSignature = await this.solanaService.cancelListing(listingId, deviceId);
+    // 2) Build unsigned cancellation tx
+    const { unsignedTx } = await this.solanaService.cancelListing(
+      listingId,
+      deviceId
+    );
 
     // 3) Mirror update
     listing.status = 'Cancelled';
     await listing.save();
 
-    this.logger.log(`Listing ${listingId} cancelled on‑chain and in Mongo`);
-    return { txSignature };
+    this.logger.log(`Prepared cancel for listing ${listingId}`);
+    return { unsignedTx };
   }
 
+  /**
+   * Retrieve listings for a device
+   */
   findByDevice(deviceId: string) {
     return this.listingModel.find({ deviceId }).lean().exec();
   }

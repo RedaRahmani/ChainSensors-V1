@@ -15,7 +15,7 @@ async function bootstrap() {
     console.error('Marketplace initialization error:', error);
   }
 
-  await app.listen(3000);
+  await app.listen(3001);
   console.log('Application listening on port 3000');
 }
 bootstrap();
