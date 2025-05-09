@@ -5,7 +5,14 @@ import { SolanaService } from './solana/solana.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true,
+    forbidNonWhitelisted: true,
+    transform: true }));
+  app.enableCors({
+    origin: [/^http:\/\/localhost:\d+$/], // regex for any localhost port
+  });
+  
+
 
   // Initialize marketplace on Solana (runs once)
   const solanaService = app.get(SolanaService);

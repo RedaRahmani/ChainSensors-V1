@@ -1,15 +1,25 @@
 // frontend/hooks/useRegisterDevice.ts
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { Transaction } from '@solana/web3.js';
-
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL as string;
+import { EnrollMetadata } from '../app/seller/index'; // adjust your path
 
 export function useRegisterDevice() {
   const { publicKey, signTransaction } = useWallet();
   const { connection } = useConnection();
 
-  return async (csrPem: string, metadata: any) => {
-    // 1) Ensure wallet and signing are available
+  const enrollEndpoint = 'http://localhost:3001/dps/enroll';
+  const finalizeEndpoint = 'http://localhost:3001/dps/finalize';
+
+  return async (
+    csrPem: string,
+    metadata: EnrollMetadata
+  ): Promise<{
+    deviceId: string;
+    certificatePem: string;
+    brokerUrl: string;
+    txSignature: string;
+  }> => {
+    // 1) Wallet checks
     if (!publicKey) {
       throw new Error('Wallet not connected');
     }
@@ -17,35 +27,66 @@ export function useRegisterDevice() {
       throw new Error('Wallet does not support transaction signing');
     }
 
-    // 2) Request unsigned transaction from backend
-    const response = await fetch(`${BACKEND_URL}/dps/enroll`, {
+    // 2) Phase 1: request unsignedTx + cert
+    const enrollRes = await fetch(enrollEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ csrPem, metadata }),
+      body: JSON.stringify({
+        csrPem,
+        metadata,
+        sellerPubkey: publicKey.toString(),
+        token: '123456789'
+      }),
     });
-    if (!response.ok) {
-      throw new Error(`Error ${response.status}: ${response.statusText}`);
+    if (!enrollRes.ok) {
+      const errText = await enrollRes.text();
+      throw new Error(`Enroll failed: ${enrollRes.status} ${errText}`);
     }
-    const { deviceId, brokerUrl, unsignedTx, certificatePem } = await response.json();
+    const {
+      deviceId,
+      certificatePem,
+      unsignedTx,
+      brokerUrl,
+    }: {
+      deviceId: string;
+      certificatePem: string;
+      unsignedTx: string;
+      brokerUrl: string;
+    } = await enrollRes.json();
 
-    // 3) Deserialize transaction
-    const rawTx = Buffer.from(unsignedTx, 'base64');
-    const tx = Transaction.from(rawTx);
-
-    // 4) Set fee payer to connected wallet
+    // 3) Decode & deserialize the unsigned transaction
+    const raw = Uint8Array.from(
+      atob(unsignedTx),
+      (c) => c.charCodeAt(0)
+    );
+    const tx = Transaction.from(raw);
+    console.log(tx)
+    // 4) (Optional) ensure fee payer is set to this wallet
     tx.feePayer = publicKey;
-
-    // 5) Sign transaction with user's wallet
+    console.log(tx.feePayer)
+    // 5) Phase 2: have the wallet sign it
     const signedTx = await signTransaction(tx);
+    console.log(signedTx)
     if (!signedTx) {
       throw new Error('Failed to sign transaction');
     }
+    const signedBase64 = btoa(
+      String.fromCharCode(...signedTx.serialize())
+    );
 
-    // 6) Send and confirm transaction
-    const txid = await connection.sendRawTransaction(signedTx.serialize());
-    await connection.confirmTransaction(txid, 'confirmed');
+    // 6) Submit the signed tx to your backend for on-chain broadcast
+    const finalizeRes = await fetch(finalizeEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId, signedTx: signedBase64 }),
+    });
+    if (!finalizeRes.ok) {
+      const errText = await finalizeRes.text();
+      throw new Error(`Finalize failed: ${finalizeRes.status} ${errText}`);
+    }
+    const { txSignature }: { txSignature: string } = await finalizeRes.json();
 
-    // 7) Return useful info for UI
-    return { deviceId, brokerUrl, certificatePem, txid };
+    // 7) Return everything the UI needs
+    return { deviceId, certificatePem, brokerUrl, txSignature };
   };
 }
