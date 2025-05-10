@@ -84,9 +84,10 @@ export function useRegisterDevice() {
       const errText = await finalizeRes.text();
       throw new Error(`Finalize failed: ${finalizeRes.status} ${errText}`);
     }
+    
     const { txSignature }: { txSignature: string } = await finalizeRes.json();
 
-    // 7) Return everything the UI needs
+    // // 7) Return everything the UI needs
     return { deviceId, certificatePem, brokerUrl, txSignature };
   };
 }

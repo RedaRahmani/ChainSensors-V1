@@ -31,6 +31,7 @@ interface FinalizeDto {
 interface FinalizeResponse {
   txSignature: string;
   brokerUrl: string;
+  certificatePem: string;
 }
 
 @Controller('dps')

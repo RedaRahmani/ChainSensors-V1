@@ -548,7 +548,7 @@ export default function RegisterDevicePage() {
             <CardContent className="space-y-4">
               <div>
                 <h4 className="font-medium">Certificate PEM</h4>
-                <pre className="p-4 bg-gray-100 rounded overflow-auto text-xs"><code>{result.certificatePem}</code></pre>
+                <pre className="p-4 bg-gray-400 text-green-200 rounded overflow-auto text-sm font-mono whitespace-pre-wrap"><code>{result.certificatePem}</code></pre>
               </div>
               <div>
                 <h4 className="font-medium">MQTT Broker URL</h4>

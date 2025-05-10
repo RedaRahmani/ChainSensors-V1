@@ -15,7 +15,7 @@ export class Device {
   deviceId: string;
 
   /** PEM CSR as submitted by the agent */
-  @Prop({ required: true })
+  @Prop({ required: false })
   csrPem: string;
 
   /** the metadata object the agent sent */

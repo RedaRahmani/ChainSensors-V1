@@ -166,7 +166,7 @@ export class DpsService {
       txSignature: null,
       lastSeen: null,
       latestDataCid: null,
-      csrPem : certificatePem,
+      certificatePem : certificatePem,
     } as any); // extend your schema if needed
     this.logger.log(`device id: ${deviceId}   certification pem ${certificatePem}   unsignedtx ${unsignedTx}    brokerurl ${this.brokerUrl}`);
     return { deviceId, certificatePem, unsignedTx, brokerUrl: this.brokerUrl };
@@ -180,7 +180,7 @@ export class DpsService {
   async finalizeRegistration(
     deviceId: string,
     signedTx: string,
-  ): Promise<{ txSignature: string; brokerUrl: string }> {
+  ): Promise<{ txSignature: string; brokerUrl: string; certificatePem: string; }> {
     console.log('we areeeee inside finalizeee ')
     const device = await this.deviceModel.findOne({ deviceId });
     console.log(`this issss the device ${device}`)
@@ -203,7 +203,7 @@ export class DpsService {
     device.status = 'complete'
     await device.save();
 
-    return { txSignature, brokerUrl: this.brokerUrl };
+    return { txSignature, brokerUrl: this.brokerUrl, certificatePem: device.certificatePem, };
   }
 
   /** Called by MQTT/webhooks when new sensor-data arrives */
