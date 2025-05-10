@@ -1,48 +1,41 @@
-#[allow(unexpected_cfgs)]
 use anchor_lang::prelude::*;
-use crate::state::{Marketplace, ListingState};
+use crate::state::ListingState;
+use crate::state::device_registry::DeviceRegistry;
+use anchor_lang::solana_program::clock::Clock;
 
 #[derive(Accounts)]
-#[instruction(device_id: String)]
+#[instruction(listing_id: [u8; 32])]
 pub struct CancelListing<'info> {
     #[account(mut)]
     pub seller: Signer<'info>,
+
     #[account(
         mut,
-        seeds = [b"listing", marketplace.key().as_ref(), seller.key().as_ref(), device_id.as_bytes()],
-        bump,
+        seeds = [b"listing", device_registry.key().as_ref(), listing_id.as_ref()],
+        bump = listing_state.bump,
+        constraint = listing_state.seller == seller.key() @ ErrorCode::Unauthorized,
+        constraint = listing_state.status == 0 @ ErrorCode::InvalidStatus, // Only active listings
     )]
-    pub listing: Account<'info, ListingState>,
-    #[account(
-        seeds = [b"marketplace", marketplace.admin.as_ref()],
-        bump = marketplace.bump,
-    )]
-    pub marketplace: Account<'info, Marketplace>,
+    pub listing_state: Account<'info, ListingState>,
+
+    // Required since it's part of the PDA seeds
+    pub device_registry: Account<'info, DeviceRegistry>,
+
+    pub system_program: Program<'info, System>,
 }
 
-impl<'info> CancelListing<'info> {
-    pub fn handler(ctx: Context<Self>, device_id: String) -> Result<()> {
-        let listing = &mut ctx.accounts.listing;
-        let seller = &ctx.accounts.seller;
-
-        // Check that the caller is the seller
-        require!(listing.seller == seller.key(), ErrorCode::Unauthorized);
-
-        // Check that the listing is active
-        require!(listing.status == 0, ErrorCode::ListingNotActive);
-
-        // Set status to cancelled
-        listing.status = 2;
-
-        msg!("Listing cancelled for device: {}", device_id);
-        Ok(())
-    }
+pub fn handler(ctx: Context<CancelListing>, listing_id: [u8; 32]) -> Result<()> {
+    let listing = &mut ctx.accounts.listing_state;
+    listing.status = 2; // Cancelled
+    listing.updated_at = Clock::get()?.unix_timestamp;
+    msg!("Cancelled listing: {}", String::from_utf8_lossy(&listing_id));
+    Ok(())
 }
 
 #[error_code]
 pub enum ErrorCode {
-    #[msg("Unauthorized: Only the seller can cancel the listing")]
+    #[msg("Only the seller can cancel the listing")]
     Unauthorized,
     #[msg("Listing is not active")]
-    ListingNotActive,
+    InvalidStatus,
 }
