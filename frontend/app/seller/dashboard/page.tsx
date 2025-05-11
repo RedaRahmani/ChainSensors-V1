@@ -82,7 +82,7 @@ export default function SellerDashboard() {
               Register Device
             </Button>
             <Button
-              onClick={() => router.push("/seller/listings/create")}
+              onClick={() => router.push("/seller/listings")}
               className="bg-secondary hover:bg-secondary/90"
             >
               Create Listing

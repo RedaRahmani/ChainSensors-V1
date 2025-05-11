@@ -1,11 +1,11 @@
-// src/dps/dps.controller.ts
-
 import {
   Controller,
   Post,
   Body,
   HttpException,
   HttpStatus,
+  Get,
+  Query,
 } from '@nestjs/common';
 import { PublicKey } from '@solana/web3.js';
 import { DpsService, EnrollMetadata } from './dps.service';
@@ -13,7 +13,7 @@ import { DpsService, EnrollMetadata } from './dps.service';
 interface GenerateTxDto {
   csrPem: string;
   metadata: EnrollMetadata;
-  sellerPubkey: string;      // ← NEW: seller’s wallet pubkey (base58)
+  sellerPubkey: string;
 }
 
 interface GenerateTxResponse {
@@ -25,7 +25,7 @@ interface GenerateTxResponse {
 
 interface FinalizeDto {
   deviceId: string;
-  signedTx: string;   // base64‐encoded signed transaction
+  signedTx: string;   
 }
 
 interface FinalizeResponse {
@@ -69,7 +69,7 @@ export class DpsController {
       return await this.dpsService.generateRegistrationTransaction(
         csrPem,
         metadata,
-        sellerKey,            // ← PASS IT THROUGH
+        sellerKey,
       );
     } catch (err: any) {
       throw new HttpException(
@@ -103,4 +103,9 @@ export class DpsController {
       );
     }
   }
+
+  @Get('my-devices')
+async myDevices(@Query('sellerPubkey') seller: string) {
+  return this.dpsService.listDevices({ sellerPubkey: seller });
+}
 }
