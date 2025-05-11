@@ -10,7 +10,7 @@ import {
 } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import idl from './idl.json';
-import { Idl } from '@coral-xyz/anchor';
+import { BN, Idl } from '@coral-xyz/anchor';
 
 @Injectable()
 export class SolanaService {
@@ -220,59 +220,101 @@ export class SolanaService {
     return signature;
   }
 
-  // ... your createListing / cancelListing methods can remain unchanged
 
+  private async buildUnsignedTxListing(
+    txPromise: Promise<Transaction>,
+    feePayer: PublicKey,
+  ): Promise<string> {
+    const tx = await txPromise;
+    const { blockhash } = await this.provider.connection.getLatestBlockhash();
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = feePayer;
+    return tx
+      .serialize({ requireAllSignatures: false, verifySignatures: false })
+      .toString('base64');
+  }
 
-  /**
-   * Create a new on-chain listing.
-   * (Left unchanged from your original, but you can apply
-   * the same pattern if you need unsigned-for-frontend.)
-   */
-  // async createListing(
-  //   listingId: string,
-  //   dataCid: string,
-  //   pricePerUnit: number,
-  //   totalDataUnits: number,
-  //   deviceId: string,
-  // ): Promise<string> {
-  //   // ... your original createListing rpc() logic here ...
-  //   return this.program.methods
-  //     .createListing(
-  //       dataCid,
-  //       new anchor.BN(pricePerUnit),
-  //       new anchor.BN(totalDataUnits),
-  //       listingId,
-  //       Array(32).fill(0),
-  //       Array(32).fill(0),
-  //       /* bump */ 0,
-  //     )
-  //     .accounts({ /* … */ })
-  //     .rpc();
-  // }
+  async buildCreateListingTransaction(args: {
+    listingId: string;
+    dataCid: string;
+    pricePerUnit: number;
+    deviceId: string;
+    totalDataUnits: number;
+    expiresAt: number | null;
+    sellerPubkey: PublicKey;
+  }): Promise<{ unsignedTx: string }> {
+    const {
+      listingId,
+      dataCid,
+      pricePerUnit,
+      deviceId,
+      totalDataUnits,
+      expiresAt,
+      sellerPubkey,
+    } = args;
+    const pid = this.program.programId;
+    const marketplaceAdmin = new PublicKey(
+      this.configService.get<string>('MARKETPLACE_ADMIN_PUBKEY')!,
+    );
 
-  // async submitSignedTransaction(
-  //   signedTxBase64: string,
-  // ): Promise<string> {
-  //   // decode and send
-  //   const raw = Buffer.from(signedTxBase64, 'base64');
-  //   const signature = await this.provider.connection.sendRawTransaction(
-  //     raw,
-  //     { skipPreflight: false, preflightCommitment: 'confirmed' },
-  //   );
-  //   // wait for confirmation
-  //   await this.provider.connection.confirmTransaction(signature, 'confirmed');
-  //   this.logger.log(`Submitted & confirmed tx ${signature}`);
-  //   return signature;
-  // }
+    // PDAs
+    const [marketplacePda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('marketplace'), marketplaceAdmin.toBuffer()],
+      pid,
+    );
+    const [deviceRegistryPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('device'), marketplacePda.toBuffer(), Buffer.from(deviceId)],
+      pid,
+    );
+    const [listingStatePda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from('listing'),
+        deviceRegistryPda.toBuffer(),
+        Buffer.from(listingId),
+      ],
+      pid,
+    );
 
-  // async cancelListing(
-  //   listingId: string,
-  //   deviceId: string,
-  // ): Promise<string> {
-  //   // ... your original cancelListing rpc() logic here ...
-  //   return this.program.methods
-  //     .cancelListing(listingId)
-  //     .accounts({ /* … */ })
-  //     .rpc();
-  // }
-}
+    // Build the instruction
+    const builder = this.program.methods
+      .createListing(
+        listingId,
+        dataCid,
+        new BN(pricePerUnit),
+        deviceId,
+        new BN(totalDataUnits),
+        expiresAt !== null ? new BN(expiresAt) : null,
+      )
+      .accounts({
+        seller: sellerPubkey,
+        marketplace: marketplacePda,
+        deviceRegistry: deviceRegistryPda,
+        listingState: listingStatePda,
+        systemProgram: SystemProgram.programId,
+        rent: SYSVAR_RENT_PUBKEY,
+      });
+
+    // Optional debug
+    this.logger.debug('IDL args:', this.program.idl.instructions.find(i => i.name === 'createListing')?.args);
+    this.logger.debug('Call values:', [listingId, dataCid, pricePerUnit, deviceId, totalDataUnits, expiresAt]);
+
+    // Serialize unsigned transaction
+    const txPromise = builder.transaction();
+    const unsignedTx = await this.buildUnsignedTxListing(txPromise, sellerPubkey);
+    this.logger.log(`Built unsigned createListing tx`);
+    return { unsignedTx };
+  }
+
+  async submitSignedTransactionListing(
+    signedTxBase64: string,
+  ): Promise<string> {
+    const raw = Buffer.from(signedTxBase64, 'base64');
+    const sig = await this.provider.connection.sendRawTransaction(raw, {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+    });
+    await this.provider.connection.confirmTransaction(sig, 'confirmed');
+    this.logger.log(`Transaction confirmed: ${sig}`);
+    return sig;
+  }
+  }

@@ -4,7 +4,7 @@ use crate::state::listing::ListingState;
 use anchor_lang::solana_program::clock::Clock;
 
 #[derive(Accounts)]
-#[instruction(listing_id: [u8; 32])]  // Inform Anchor about listing_id for PDA bump
+#[instruction(listing_id: String)]
 pub struct CreateListing<'info> {
     #[account(mut)]
     pub seller: Signer<'info>,
@@ -27,71 +27,66 @@ pub struct CreateListing<'info> {
     #[account(
         init,
         payer = seller,
-        seeds = [b"listing", device_registry.key().as_ref(), listing_id.as_ref()],
+        seeds = [
+          b"listing",
+          device_registry.key().as_ref(),
+          listing_id.as_bytes()
+        ],
         bump,
-        space = 8 + ListingState::INIT_SPACE,  // 8 (discriminator) + 429 (fields)
+        space = 8 + ListingState::INIT_SPACE,
     )]
     pub listing_state: Account<'info, ListingState>,
 
     pub system_program: Program<'info, System>,
-    pub rent: Sysvar<'info, Rent>,
+    pub rent:            Sysvar<'info, Rent>,
 }
 
 pub fn handler(
     ctx: Context<CreateListing>,
-    listing_id: [u8; 32],
-    data_cid: [u8; 64],
+    listing_id: String,
+    data_cid:   String,
     price_per_unit: u64,
-    device_id: [u8; 32],
+    device_id:  String,
     total_data_units: u64,
-    unit_type: [u8; 32],
-    access_key_hash: [u8; 32],
-    data_type: [u8; 32],
-    location: [u8; 64],
     expires_at: Option<i64>,
 ) -> Result<()> {
-    let listing_state = &mut ctx.accounts.listing_state;
+    let l = &mut ctx.accounts.listing_state;
     let clock = Clock::get()?;
 
     // Input validation
-    require!(!listing_id.iter().all(|&b| b == 0), ErrorCode::ListingIdEmpty);
-    require!(price_per_unit > 0, ErrorCode::InvalidPrice);
-    require!(total_data_units > 0, ErrorCode::InvalidDataUnits);
-    require!(!data_cid.iter().all(|&b| b == 0), ErrorCode::DataCidEmpty);
+    require!(!listing_id.is_empty(), ErrorCode::ListingIdEmpty);
+    require!(!device_id.is_empty(),  ErrorCode::DeviceIdEmpty);
+    require!(!data_cid.is_empty(),   ErrorCode::DataCidEmpty);
+    require!(price_per_unit > 0,     ErrorCode::InvalidPrice);
+    require!(total_data_units > 0,   ErrorCode::InvalidDataUnits);
 
-    // Initialize listing state
-    listing_state.seller = ctx.accounts.seller.key();
-    listing_state.marketplace = ctx.accounts.marketplace.key();
-    listing_state.device = ctx.accounts.device_registry.key();
-    listing_state.data_cid = data_cid;
-    listing_state.price_per_unit = price_per_unit;
-    listing_state.status = 0; // Active
-    listing_state.device_id = device_id;
-    listing_state.total_data_units = total_data_units;
-    listing_state.remaining_units   = total_data_units; 
-    listing_state.unit_type = unit_type;
-    listing_state.token_mint = ctx.accounts.marketplace.token_mint; // Derived from Marketplace
-    listing_state.access_key_hash = access_key_hash;
-    listing_state.data_type = data_type;
-    listing_state.location = location;
-    listing_state.created_at = clock.unix_timestamp;
-    listing_state.updated_at = clock.unix_timestamp;
-    listing_state.expires_at = expires_at;
-    listing_state.bump = ctx.bumps.listing_state;
-    listing_state.buyer = None;
-    listing_state.sold_at = None;
-
-    listing_state.purchase_count   = 0;
+    // Initialize
+    l.seller           = ctx.accounts.seller.key();
+    l.marketplace      = ctx.accounts.marketplace.key();
+    l.device           = ctx.accounts.device_registry.key();
+    l.device_id        = device_id.clone();
+    l.listing_id       = listing_id.clone();
+    l.data_cid         = data_cid;
+    l.price_per_unit   = price_per_unit;
+    l.status           = 0;
+    l.total_data_units = total_data_units;
+    l.remaining_units  = total_data_units;
+    l.token_mint       = ctx.accounts.marketplace.token_mint;
+    l.created_at       = clock.unix_timestamp;
+    l.updated_at       = clock.unix_timestamp;
+    l.expires_at       = expires_at;
+    l.bump             = ctx.bumps.listing_state;
+    l.buyer            = None;
+    l.purchase_count   = 0;
+    l.sold_at          = None;
 
     msg!(
         "Listing created: {} for device: {}",
-        String::from_utf8_lossy(&listing_id),
-        String::from_utf8_lossy(&device_id)
+        listing_id,
+        device_id
     );
-
     Ok(())
 }
-
 
 #[error_code]
 pub enum ErrorCode {
@@ -103,10 +98,12 @@ pub enum ErrorCode {
     DeviceInactive,
     #[msg("Listing ID cannot be empty")]
     ListingIdEmpty,
+    #[msg("Device ID cannot be empty")]
+    DeviceIdEmpty,
+    #[msg("Data CID cannot be empty")]
+    DataCidEmpty,
     #[msg("Price per unit must be greater than zero")]
     InvalidPrice,
     #[msg("Total data units must be greater than zero")]
     InvalidDataUnits,
-    #[msg("Data CID cannot be empty")]
-    DataCidEmpty,
 }

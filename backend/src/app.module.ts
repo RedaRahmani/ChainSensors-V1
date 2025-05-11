@@ -8,7 +8,7 @@ import { WalrusModule } from './walrus/walrus.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { BrokerModule } from './broker/broker.module';
 import { ReadingModule }  from './reading/reading.module';
-//import { ListingModule } from './listing/listing.module';
+import { ListingModule } from './listing/listing.module';
 import configuration from './configuration';
 
 @Module({
@@ -31,7 +31,7 @@ import configuration from './configuration';
     IngestModule,
     BrokerModule,
     ReadingModule,
-    //ListingModule,
+    ListingModule,
   ],
 })
 export class AppModule {}

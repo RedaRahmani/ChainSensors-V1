@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-chain_sensors_contracts = "2br92QQ6NsTZV5Scny6nfh6JvQmUMobd7JDHSTasAgYK"
+chain_sensors_contracts = "E3yceGcwF38aFzoJHzmNGGZKEk9bmMqZRNTvQ8ehVms3"
 
 [registry]
 url = "https://api.apr.dev"
