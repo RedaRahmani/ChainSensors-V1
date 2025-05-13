@@ -11,8 +11,10 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ArrowLeft, Download, Clock, BarChart, ThermometerSun, Droplets, Wind, BarChart3 } from "lucide-react"
+import { RatingModal } from "@/components/rating-modal"
+import { RatingDisplay } from "@/components/rating-display"
 
-// Mock data for purchased listings
+
 const mockPurchases = [
   {
     id: "purchase-1",
@@ -26,7 +28,6 @@ const mockPurchases = [
     location: "New York City",
     deviceType: "temperature",
     seller: "0x1a2b...3c4d",
-    rating: 4.8,
     dataCid: "Qm1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9s0t",
     apiKey: "sk_live_abcdefghijklmnopqrstuvwxyz123456",
   },
@@ -42,7 +43,6 @@ const mockPurchases = [
     location: "Los Angeles",
     deviceType: "air-quality",
     seller: "0x5e6f...7g8h",
-    rating: 4.5,
     dataCid: "Qm2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9s0t1u",
     apiKey: "sk_live_bcdefghijklmnopqrstuvwxyz1234567",
   },
@@ -50,35 +50,58 @@ const mockPurchases = [
 
 export default function PurchasesPage() {
   const router = useRouter()
-  const { connected, userType } = useWalletContext()
-  const [purchases, setPurchases] = useState(mockPurchases)
+  const { connected, userType, publicKey } = useWalletContext()
+  const userId = publicKey!
+
+  const [purchases] = useState(mockPurchases)
   const [selectedPurchase, setSelectedPurchase] = useState<any>(null)
+  const [isRatingModalOpen, setIsRatingModalOpen] = useState(false)
+  const [purchaseToRate, setPurchaseToRate] = useState<any>(null)
+  const [userReviews, setUserReviews] = useState<Record<
+    string,
+    { rating: number; comment: string }
+  >>({})
 
+  // ─── Load existing ratings from backend ───────────────────────────────────────
   useEffect(() => {
-    if (!connected) {
+    if (!connected || userType !== "buyer") {
       router.push("/")
       return
     }
 
-    if (userType !== "buyer") {
-      router.push("/")
-      return
-    }
+    Promise.all(
+      purchases.map(async (p) => {
+        try {
+          const res = await fetch(`/ratings/listing/${p.listingId}`)
+          if (!res.ok) return null
+          const stats = (await res.json()) as Array<{ user: string; listing: string; rating: number; comment: string }>
+          const mine = stats.find((r) => r.user === userId)
+          if (mine) {
+            return [p.id, { rating: mine.rating, comment: mine.comment }]
+          }
+        } catch {
+          /* ignore */
+        }
+        return null
+      })
+    ).then((pairs) => {
+      const loaded: any = {}
+      for (const item of pairs) {
+        if (item) {
+          const [key, val] = item
+          loaded[key] = val
+        }
+      }
+      setUserReviews(loaded)
+    })
+  }, [connected, userType, router, purchases, userId])
 
-    // Set the first purchase as selected by default
-    if (purchases.length > 0 && !selectedPurchase) {
-      setSelectedPurchase(purchases[0])
-    }
-  }, [connected, userType, router, purchases, selectedPurchase])
-
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString)
-    return date.toLocaleDateString("en-US", {
+  const formatDate = (iso: string) =>
+    new Date(iso).toLocaleDateString("en-US", {
       year: "numeric",
       month: "short",
       day: "numeric",
     })
-  }
 
   const getDeviceIcon = (type: string) => {
     switch (type) {
@@ -88,31 +111,52 @@ export default function PurchasesPage() {
         return <Droplets className="h-5 w-5" />
       case "air-quality":
         return <Wind className="h-5 w-5" />
-      case "soil-moisture":
-        return <Droplets className="h-5 w-5" />
-      case "wind":
-        return <Wind className="h-5 w-5" />
       default:
         return <BarChart3 className="h-5 w-5" />
     }
   }
 
   const handleRate = (purchaseId: string) => {
-    // In a real app, this would open a rating dialog
-    console.log("Rate purchase:", purchaseId)
+    const p = purchases.find((x) => x.id === purchaseId)
+    if (p) {
+      setPurchaseToRate(p)
+      setIsRatingModalOpen(true)
+    }
+  }
+
+  // ─── POST new rating ─────────────────────────────────────────────────────────
+  const handleRatingSubmit = async (rating: number, comment: string) => {
+    if (!purchaseToRate) return
+
+    const payload = { user: userId, listing: purchaseToRate.listingId, rating, comment }
+
+    try {
+      const res = await fetch("/ratings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) throw new Error(await res.text())
+
+      setUserReviews((prev) => ({ ...prev, [purchaseToRate.id]: { rating, comment } }))
+    } catch (err) {
+      console.error("Failed to submit rating", err)
+      alert("Could not submit rating.")
+    } finally {
+      setIsRatingModalOpen(false)
+      setPurchaseToRate(null)
+    }
   }
 
   return (
     <main className="min-h-screen bg-background">
       <Navbar />
-
       <div className="container mx-auto px-4 pt-24 pb-16">
+        {/* Header */}
         <div className="flex items-center mb-8">
           <Button variant="ghost" size="sm" onClick={() => router.push("/buyer/marketplace")} className="mr-4">
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Marketplace
+            <ArrowLeft className="h-4 w-4 mr-2" /> Back to Marketplace
           </Button>
-
           <div>
             <h1 className="text-3xl font-bold">My Purchases</h1>
             <p className="text-muted-foreground">Access and manage your purchased data</p>
@@ -135,7 +179,9 @@ export default function PurchasesPage() {
                     {purchases.map((purchase) => (
                       <div
                         key={purchase.id}
-                        className={`p-4 cursor-pointer hover:bg-muted/50 transition-colors ${selectedPurchase?.id === purchase.id ? "bg-muted" : ""}`}
+                        className={`p-4 cursor-pointer hover:bg-muted/50 transition-colors ${
+                          selectedPurchase?.id === purchase.id ? "bg-muted" : ""
+                        }`}
                         onClick={() => setSelectedPurchase(purchase)}
                       >
                         <div className="flex items-start gap-3">
@@ -148,6 +194,15 @@ export default function PurchasesPage() {
                               <Clock className="h-3 w-3 mr-1" />
                               <span>Expires: {formatDate(purchase.expiryDate)}</span>
                             </div>
+                            {userReviews[purchase.id] && (
+                              <div className="mt-1">
+                                <RatingDisplay
+                                  rating={userReviews[purchase.id].rating}
+                                  size="sm"
+                                  showValue={false}
+                                />
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -155,9 +210,7 @@ export default function PurchasesPage() {
                   </div>
                 </CardContent>
                 <CardFooter className="p-4 pt-2">
-                  <Button variant="outline" className="w-full" onClick={() => router.push("/buyer/marketplace")}>
-                    Browse More Data
-                  </Button>
+                  <Button variant="outline" className="w-full" onClick={() => router.push("/buyer/marketplace")}>Browse More Data</Button>
                 </CardFooter>
               </Card>
             </div>
@@ -173,19 +226,18 @@ export default function PurchasesPage() {
                         <CardDescription className="flex items-center mt-1">
                           <span>{selectedPurchase.location}</span>
                           <span className="mx-2">•</span>
-                          <span>
-                            {selectedPurchase.deviceType.charAt(0).toUpperCase() + selectedPurchase.deviceType.slice(1)}
-                          </span>
+                          <span>{
+                            selectedPurchase.deviceType.charAt(0).toUpperCase() +
+                            selectedPurchase.deviceType.slice(1)
+                          }</span>
                         </CardDescription>
                       </div>
-
-                      <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20">
-                        Active
-                      </Badge>
+                      <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20">Active</Badge>
                     </div>
                   </CardHeader>
 
                   <CardContent className="space-y-6">
+                    {/* Stats grid unchanged */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                       <div>
                         <h4 className="text-sm font-medium text-muted-foreground">Purchased</h4>
@@ -197,9 +249,7 @@ export default function PurchasesPage() {
                       </div>
                       <div>
                         <h4 className="text-sm font-medium text-muted-foreground">Price</h4>
-                        <p className="font-medium">
-                          {selectedPurchase.price} SOL/{selectedPurchase.unit}
-                        </p>
+                        <p className="font-medium">{selectedPurchase.price} SOL/{selectedPurchase.unit}</p>
                       </div>
                       <div>
                         <h4 className="text-sm font-medium text-muted-foreground">Seller</h4>
@@ -207,6 +257,18 @@ export default function PurchasesPage() {
                       </div>
                     </div>
 
+                    {/* Your Rating Display */}
+                    {userReviews[selectedPurchase.id] && (
+                      <div className="p-4 bg-muted rounded-lg">
+                        <div className="flex items-center gap-2 mb-2">
+                          <h4 className="text-sm font-medium">Your Rating</h4>
+                          <RatingDisplay rating={userReviews[selectedPurchase.id].rating} size="md" />
+                        </div>
+                        <p className="text-sm text-muted-foreground">{userReviews[selectedPurchase.id].comment}</p>
+                      </div>
+                    )}
+
+                    {/* Tabs: Access / API / Transaction */}
                     <Tabs defaultValue="access" className="w-full">
                       <TabsList className="grid w-full grid-cols-3">
                         <TabsTrigger value="access">Access Data</TabsTrigger>
@@ -222,41 +284,7 @@ export default function PurchasesPage() {
                               <h4 className="text-sm font-medium mb-2">Latest Data</h4>
                               <pre className="text-xs font-mono">
                                 {`[
-  {
-    "timestamp": "2023-04-27T12:00:00Z",
-    "value": 22.5,
-    "unit": "celsius",
-    "location": "${selectedPurchase.location}",
-    "device_id": "sensor-${Math.floor(Math.random() * 1000)}"
-  },
-  {
-    "timestamp": "2023-04-27T12:15:00Z",
-    "value": 22.7,
-    "unit": "celsius",
-    "location": "${selectedPurchase.location}",
-    "device_id": "sensor-${Math.floor(Math.random() * 1000)}"
-  },
-  {
-    "timestamp": "2023-04-27T12:30:00Z",
-    "value": 23.1,
-    "unit": "celsius",
-    "location": "${selectedPurchase.location}",
-    "device_id": "sensor-${Math.floor(Math.random() * 1000)}"
-  },
-  {
-    "timestamp": "2023-04-27T12:45:00Z",
-    "value": 23.4,
-    "unit": "celsius",
-    "location": "${selectedPurchase.location}",
-    "device_id": "sensor-${Math.floor(Math.random() * 1000)}"
-  },
-  {
-    "timestamp": "2023-04-27T13:00:00Z",
-    "value": 23.8,
-    "unit": "celsius",
-    "location": "${selectedPurchase.location}",
-    "device_id": "sensor-${Math.floor(Math.random() * 1000)}"
-  }
+  {\n    "timestamp": "2023-04-27T12:00:00Z",\n    "value": 22.5,\n    "unit": "celsius",\n    "location": "${selectedPurchase.location}",\n    "device_id": "sensor-${Math.floor(Math.random() * 1000)}"\n  },\n  { ... }
 ]`}
                               </pre>
                             </div>
@@ -264,20 +292,20 @@ export default function PurchasesPage() {
                         </div>
 
                         <div className="flex flex-col sm:flex-row gap-4">
-                          <Button className="flex-1 bg-primary hover:bg-primary/90">
-                            <Download className="mr-2 h-4 w-4" />
-                            Download Full Dataset
-                          </Button>
-                          <Button variant="outline" className="flex-1">
-                            <BarChart className="mr-2 h-4 w-4" />
-                            View Analytics
-                          </Button>
+                          <Button className="flex-1 bg-primary hover:bg-primary/90"><Download className="mr-2 h-4 w-4" />Download Full Dataset</Button>
+                          <Button variant="outline" className="flex-1"><BarChart className="mr-2 h-4 w-4" />View Analytics</Button>
                         </div>
 
-                        <div className="p-4 bg-secondary/10 rounded-lg border border-secondary/20">
-                          <p className="text-sm text-muted-foreground">
-                            <span className="text-secondary font-medium">Data CID:</span> {selectedPurchase.dataCid}
-                          </p>
+                       
+
+                        <div className="flex justify-end">
+                          <Button
+                            variant={userReviews[selectedPurchase.id] ? "outline" : "default"}
+                            size="sm"
+                            onClick={() => handleRate(selectedPurchase.id)}
+                          >
+                            {userReviews[selectedPurchase.id] ? "Edit Rating" : "Rate This Data"}
+                          </Button>
                         </div>
                       </TabsContent>
 
@@ -285,50 +313,30 @@ export default function PurchasesPage() {
                         <div className="space-y-2">
                           <Label htmlFor="api-key">Your API Key</Label>
                           <div className="flex">
-                            <Input
-                              id="api-key"
-                              value={selectedPurchase.apiKey}
-                              readOnly
-                              className="font-mono text-xs"
-                            />
-                            <Button variant="ghost" size="icon" className="ml-2">
-                              <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                width="16"
-                                height="16"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              >
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                              </svg>
-                            </Button>
+                            <Input id="api-key" value={selectedPurchase.apiKey} readOnly className="font-mono text-xs" />
+                            <Button variant="ghost" size="icon" className="ml-2">📋</Button>
                           </div>
                         </div>
 
                         <div className="p-4 bg-muted rounded-lg">
                           <h4 className="text-sm font-medium mb-2">API Endpoint</h4>
-                          <code className="text-xs font-mono block p-2 bg-black/20 rounded">
-                            https://api.chainsensors.io/v1/data/{selectedPurchase.listingId}
-                          </code>
-
+                          <code className="text-xs font-mono block p-2 bg-black/20 rounded">https://api.chainsensors.io/v1/data/{selectedPurchase.listingId}</code>
                           <h4 className="text-sm font-medium mt-4 mb-2">Example Request</h4>
                           <pre className="text-xs font-mono p-2 bg-black/20 rounded overflow-x-auto">
-                            {`curl -X GET "https://api.chainsensors.io/v1/data/${selectedPurchase.listingId}" \\
-  -H "Authorization: Bearer ${selectedPurchase.apiKey}" \\
+                            {`curl -X GET "https://api.chainsensors.io/v1/data/${selectedPurchase.listingId}" \
+  -H "Authorization: Bearer ${selectedPurchase.apiKey}" \
   -H "Content-Type: application/json"`}
                           </pre>
                         </div>
 
-                        <div className="p-4 bg-primary/10 rounded-lg border border-primary/20">
-                          <p className="text-sm text-muted-foreground">
-                            <span className="text-primary font-medium">Note:</span> Keep your API key secure. You can
-                            regenerate it if needed by contacting support.
-                          </p>
+                        <div className="flex justify-end">
+                          <Button
+                            variant={userReviews[selectedPurchase.id] ? "outline" : "default"}
+                            size="sm"
+                            onClick={() => handleRate(selectedPurchase.id)}
+                          >
+                            {userReviews[selectedPurchase.id] ? "Edit Rating" : "Rate This Data"}
+                          </Button>
                         </div>
                       </TabsContent>
 
@@ -337,9 +345,7 @@ export default function PurchasesPage() {
                           <div className="grid grid-cols-2 gap-4">
                             <div>
                               <h4 className="text-sm font-medium text-muted-foreground">Transaction ID</h4>
-                              <p className="font-mono text-xs break-all">
-                                4zGKLBjD9Kj7ymF5vu2jLQ9GHFVHmqUP8HzR1WxEYpT7
-                              </p>
+                              <p className="font-mono text-xs break-all">4zGKLBjD9Kj7ymF5vu2jLQ9GHFVHmqUP8HzR1WxEYpT7</p>
                             </div>
                             <div>
                               <h4 className="text-sm font-medium text-muted-foreground">Purchase Date</h4>
@@ -356,24 +362,13 @@ export default function PurchasesPage() {
                           </div>
 
                           <div className="mt-4 pt-4 border-t border-border">
-                            <Button variant="outline" size="sm" className="text-xs">
-                              View on Solana Explorer
-                            </Button>
+                            <Button variant="outline" size="sm" className="text-xs">View on Solana Explorer</Button>
                           </div>
                         </div>
 
                         <div className="flex justify-between items-center">
-                          <Button variant="outline" size="sm" onClick={() => handleRate(selectedPurchase.id)}>
-                            Rate This Data
-                          </Button>
-
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="text-destructive border-destructive/30 hover:bg-destructive/10"
-                          >
-                            Report Issue
-                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => handleRate(selectedPurchase.id)}>Rate This Data</Button>
+                          <Button variant="outline" size="sm" className="text-destructive border-destructive/30 hover:bg-destructive/10">Report Issue</Button>
                         </div>
                       </TabsContent>
                     </Tabs>
@@ -395,6 +390,17 @@ export default function PurchasesPage() {
               Browse Marketplace
             </Button>
           </div>
+        )}
+
+        {purchaseToRate && (
+          <RatingModal
+            isOpen={isRatingModalOpen}
+            onClose={() => setIsRatingModalOpen(false)}
+            onSubmit={handleRatingSubmit}
+            purchaseTitle={purchaseToRate.title}
+            initialRating={userReviews[purchaseToRate.id]?.rating || 0}
+            initialComment={userReviews[purchaseToRate.id]?.comment || ""}
+          />
         )}
       </div>
     </main>

@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useWalletContext } from "@/components/wallet-context-provider"
+import { useActiveListings } from "@/hooks/useActiveListings"
+import { useLatestReading } from "@/hooks/useLatestReading"
 import { Navbar } from "@/components/navbar"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -26,99 +28,24 @@ import {
   Wind,
 } from "lucide-react"
 
-// Mock data for listings
-const mockListings = [
-  {
-    id: "listing-1",
-    title: "Urban Temperature Data",
-    description: "High-precision temperature readings from downtown sensors",
-    price: 0.5,
-    unit: "hourly",
-    location: "New York City",
-    deviceType: "temperature",
-    seller: "0x1a2b...3c4d",
-    rating: 4.8,
-    verified: true,
-    preview: true,
-  },
-  {
-    id: "listing-2",
-    title: "Air Quality Index Monitor",
-    description: "Real-time air quality data including PM2.5, PM10, and VOCs",
-    price: 0.8,
-    unit: "daily",
-    location: "Los Angeles",
-    deviceType: "air-quality",
-    seller: "0x5e6f...7g8h",
-    rating: 4.5,
-    verified: true,
-    preview: true,
-  },
-  {
-    id: "listing-3",
-    title: "Soil Moisture Analytics",
-    description: "Agricultural soil moisture data with 15-minute intervals",
-    price: 1.2,
-    unit: "daily",
-    location: "Iowa",
-    deviceType: "soil-moisture",
-    seller: "0x9i0j...1k2l",
-    rating: 4.9,
-    verified: true,
-    preview: false,
-  },
-  {
-    id: "listing-4",
-    title: "Wind Speed & Direction",
-    description: "Coastal wind measurements with directional analysis",
-    price: 0.3,
-    unit: "hourly",
-    location: "Miami",
-    deviceType: "wind",
-    seller: "0x3m4n...5o6p",
-    rating: 4.2,
-    verified: false,
-    preview: true,
-  },
-  {
-    id: "listing-5",
-    title: "Humidity Patterns",
-    description: "Indoor and outdoor humidity comparisons",
-    price: 0.6,
-    unit: "daily",
-    location: "Seattle",
-    deviceType: "humidity",
-    seller: "0x7q8r...9s0t",
-    rating: 4.7,
-    verified: true,
-    preview: true,
-  },
-  {
-    id: "listing-6",
-    title: "Traffic Flow Sensors",
-    description: "Vehicle count and speed data from major intersections",
-    price: 2.0,
-    unit: "daily",
-    location: "Chicago",
-    deviceType: "traffic",
-    seller: "0x1u2v...3w4x",
-    rating: 4.6,
-    verified: true,
-    preview: false,
-  },
-]
+import { Listing } from "@/hooks/types/listing"
 
 export default function BuyerMarketplace() {
   const router = useRouter()
   const { connected, userType } = useWalletContext()
+  const { listings: allListings, isLoading, isError } = useActiveListings()
+
   const [searchTerm, setSearchTerm] = useState("")
-  const [priceRange, setPriceRange] = useState([0, 3])
+  const [priceRange, setPriceRange] = useState([0, 15]) // Increased max to 15 SOL
   const [selectedType, setSelectedType] = useState("")
   const [selectedUnit, setSelectedUnit] = useState("")
   const [verifiedOnly, setVerifiedOnly] = useState(false)
   const [previewOnly, setPreviewOnly] = useState(false)
-  const [filteredListings, setFilteredListings] = useState(mockListings)
+  const [filteredListings, setFilteredListings] = useState<Listing[]>([])
   const [viewMode, setViewMode] = useState("grid")
+
+  const firstDeviceId = allListings.length > 0 ? allListings[0].deviceId : ""
+  const { reading, isLoading: previewLoading, isError: previewError } = useLatestReading(firstDeviceId)
 
   useEffect(() => {
     if (!connected) {
@@ -131,64 +58,75 @@ export default function BuyerMarketplace() {
       return
     }
 
-    // Apply filters
-    const filtered = mockListings.filter((listing) => {
-      // Search term filter
+    if (!isLoading && !isError) {
+      setFilteredListings(allListings)
+    }
+  }, [connected, userType, router, allListings, isLoading, isError])
+
+  useEffect(() => {
+    const filtered = allListings.filter((listing) => {
+      const title = listing.deviceMetadata?.deviceName || listing.deviceId
+      const location = listing.deviceMetadata?.location
+        ? `${listing.deviceMetadata.location.latitude}, ${listing.deviceMetadata.location.longitude}`
+        : "Unknown"
+      const dataType = listing.deviceMetadata?.dataTypes?.[0]?.type || "Generic"
+      const frequency = listing.deviceMetadata?.dataTypes?.[0]?.frequency || "unit"
+
+      console.log("Filtering listing:", listing.listingId, "Price:", listing.pricePerUnit)
+
       if (
         searchTerm &&
-        !listing.title.toLowerCase().includes(searchTerm.toLowerCase()) &&
-        !listing.description.toLowerCase().includes(searchTerm.toLowerCase())
+        !title.toLowerCase().includes(searchTerm.toLowerCase()) &&
+        !location.toLowerCase().includes(searchTerm.toLowerCase())
       ) {
         return false
       }
 
-      // Price range filter
-      if (listing.price < priceRange[0] || listing.price > priceRange[1]) {
+      if (listing.pricePerUnit < priceRange[0] || listing.pricePerUnit > priceRange[1]) {
+        console.log("Excluded by price:", listing.listingId, listing.pricePerUnit)
         return false
       }
 
-      // Device type filter
-      if (selectedType && listing.deviceType !== selectedType) {
+      if (selectedType && dataType.toLowerCase() !== selectedType.toLowerCase()) {
         return false
       }
 
-      // Pricing unit filter
-      if (selectedUnit && selectedUnit !== "any" && listing.unit !== selectedUnit) {
+      if (selectedUnit && selectedUnit !== "any" && frequency.toLowerCase() !== selectedUnit.toLowerCase()) {
         return false
       }
 
-      // Verified filter
-      if (verifiedOnly && !listing.verified) {
+      if (verifiedOnly && !listing.txSignature) {
         return false
       }
 
-      // Preview filter
-      if (previewOnly && !listing.preview) {
+      if (previewOnly && !listing.dataCid) {
         return false
       }
 
       return true
     })
-
+    console.log("Filtered listings count:", filtered.length)
     setFilteredListings(filtered)
-  }, [connected, userType, router, searchTerm, priceRange, selectedType, selectedUnit, verifiedOnly, previewOnly])
+  }, [searchTerm, priceRange, selectedType, selectedUnit, verifiedOnly, previewOnly, allListings])
 
-  const getDeviceIcon = (type: string) => {
-    switch (type) {
+  const getDeviceIcon = (type: string | undefined) => {
+    switch (type?.toLowerCase()) {
       case "temperature":
         return <ThermometerSun className="h-5 w-5" />
       case "humidity":
         return <Droplets className="h-5 w-5" />
       case "air-quality":
+      case "wind":
         return <Wind className="h-5 w-5" />
       case "soil-moisture":
         return <Droplets className="h-5 w-5" />
-      case "wind":
-        return <Wind className="h-5 w-5" />
       default:
         return <BarChart3 className="h-5 w-5" />
     }
   }
+
+  if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center">Loading...</div>
+  if (isError) return <div className="min-h-screen bg-background flex items-center justify-center">Error loading listings. Please try again later.</div>
 
   return (
     <main className="min-h-screen bg-background">
@@ -284,7 +222,7 @@ export default function BuyerMarketplace() {
                       Price Range (SOL)
                     </Label>
                     <div className="pt-4 px-2">
-                      <Slider min={0} max={3} step={0.1} value={priceRange} onValueChange={setPriceRange} />
+                      <Slider min={0} max={15} step={0.1} value={priceRange} onValueChange={setPriceRange} />
                       <div className="flex justify-between mt-2 text-xs text-muted-foreground">
                         <span>{priceRange[0]} SOL</span>
                         <span>{priceRange[1]} SOL</span>
@@ -372,152 +310,196 @@ export default function BuyerMarketplace() {
         {/* Listings */}
         {viewMode === "grid" ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredListings.map((listing) => (
-              <Card
-                key={listing.id}
-                className="overflow-hidden hover:shadow-lg hover:shadow-primary/5 transition-all duration-300 border-muted"
-              >
-                <CardHeader className="p-4 pb-2">
-                  <div className="flex justify-between items-start">
-                    <CardTitle className="text-lg">{listing.title}</CardTitle>
-                    <div className="flex items-center">
-                      {listing.verified && (
-                        <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20">
-                          <CheckCircle className="h-3 w-3 mr-1" />
-                          Verified
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-                  <CardDescription className="flex items-center mt-1">
-                    <MapPin className="h-3 w-3 mr-1" />
-                    {listing.location}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="p-4 pt-2">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                      {getDeviceIcon(listing.deviceType)}
-                    </div>
-                    <span className="text-sm">
-                      {listing.deviceType.charAt(0).toUpperCase() + listing.deviceType.slice(1)}
-                    </span>
-                  </div>
+            {filteredListings.map((listing) => {
+              const title = listing.deviceMetadata?.deviceName || listing.deviceId
+              const location = listing.deviceMetadata?.location
+                ? `${listing.deviceMetadata.location.latitude}, ${listing.deviceMetadata.location.longitude}`
+                : "Unknown"
+              const dataType = listing.deviceMetadata?.dataTypes?.[0]?.type || "Generic"
+              const frequency = listing.deviceMetadata?.dataTypes?.[0]?.frequency || "unit"
+              const verified = !!listing.txSignature
 
-                  <p className="text-sm text-muted-foreground line-clamp-2 mb-4">{listing.description}</p>
-
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center">
-                      <Star className="h-4 w-4 text-yellow-500 mr-1" />
-                      <span className="text-sm">{listing.rating}</span>
-                    </div>
-
-                    <div className="flex items-center">
-                      <Tag className="h-4 w-4 text-primary mr-1" />
-                      <span className="text-sm font-medium">{listing.price} SOL</span>
-                      <span className="text-xs text-muted-foreground ml-1">/{listing.unit}</span>
-                    </div>
-                  </div>
-                </CardContent>
-                <CardFooter className="p-4 pt-0 flex justify-between">
-                  {listing.preview && (
-                    <Button variant="outline" size="sm" className="text-xs">
-                      Preview Data
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    className="ml-auto bg-secondary hover:bg-secondary/90"
-                    onClick={() => router.push(`/buyer/purchase?id=${listing.id}`)}
-                  >
-                    Buy Now
-                  </Button>
-                </CardFooter>
-              </Card>
-            ))}
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {filteredListings.map((listing) => (
-              <Card
-                key={listing.id}
-                className="overflow-hidden hover:shadow-lg hover:shadow-primary/5 transition-all duration-300 border-muted"
-              >
-                <div className="flex flex-col md:flex-row">
-                  <div className="p-4 md:w-2/3">
+              return (
+                <Card
+                  key={listing._id}
+                  className="overflow-hidden hover:shadow-lg hover:shadow-primary/5 transition-all duration-300 border-muted"
+                >
+                  <CardHeader className="p-4 pb-2">
                     <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="text-lg font-bold">{listing.title}</h3>
-                        <div className="flex items-center text-sm text-muted-foreground mt-1">
-                          <MapPin className="h-3 w-3 mr-1" />
-                          {listing.location}
-                          <span className="mx-2">•</span>
-                          <div className="flex items-center">
-                            {getDeviceIcon(listing.deviceType)}
-                            <span className="ml-1">
-                              {listing.deviceType.charAt(0).toUpperCase() + listing.deviceType.slice(1)}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        {listing.verified && (
+                      <CardTitle className="text-lg">{title}</CardTitle>
+                      <div className="flex items-center">
+                        {verified && (
                           <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20">
                             <CheckCircle className="h-3 w-3 mr-1" />
                             Verified
                           </Badge>
                         )}
-                        {listing.preview && (
-                          <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20">
-                            Preview
-                          </Badge>
-                        )}
                       </div>
                     </div>
-
-                    <p className="text-sm text-muted-foreground my-4">{listing.description}</p>
-
-                    <div className="flex items-center">
-                      <Star className="h-4 w-4 text-yellow-500 mr-1" />
-                      <span className="text-sm">{listing.rating}</span>
-                      <Clock className="h-4 w-4 text-muted-foreground ml-4 mr-1" />
-                      <span className="text-sm text-muted-foreground">Updated recently</span>
+                    <CardDescription className="flex items-center mt-1">
+                      <MapPin className="h-3 w-3 mr-1" />
+                      {location}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="p-4 pt-2">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                        {getDeviceIcon(dataType)}
+                      </div>
+                      <span className="text-sm">
+                        {dataType.charAt(0).toUpperCase() + dataType.slice(1)}
+                      </span>
                     </div>
-                  </div>
 
-                  <div className="p-4 md:w-1/3 bg-muted/30 flex flex-col justify-between">
-                    <div>
-                      <div className="flex justify-between items-center mb-4">
-                        <span className="text-sm text-muted-foreground">Price:</span>
-                        <div className="text-right">
-                          <span className="text-xl font-bold">{listing.price} SOL</span>
-                          <span className="text-xs text-muted-foreground ml-1">/{listing.unit}</span>
+                    <p className="text-sm text-muted-foreground line-clamp-2 mb-4">
+                      Data from {title} ({dataType})
+                    </p>
+
+                    {previewLoading ? (
+                      <p className="text-sm text-muted-foreground">Loading preview...</p>
+                    ) : previewError || !reading ? (
+                      <p className="text-sm text-muted-foreground">No preview available</p>
+                    ) : (
+                      <div className="text-sm text-muted-foreground">
+                        Preview: {JSON.stringify(reading).slice(0, 50)}...
+                      </div>
+                    )}
+
+                    <div className="flex justify-between items-center mt-4">
+                      <div className="flex items-center">
+                        <Star className="h-4 w-4 text-yellow-500 mr-1" />
+                        <span className="text-sm">4.5</span>
+                      </div>
+
+                      <div className="flex items-center">
+                        <Tag className="h-4 w-4 text-primary mr-1" />
+                        <span className="text-sm font-medium">{listing.pricePerUnit} SOL</span>
+                        <span className="text-xs text-muted-foreground ml-1">/{frequency}</span>
+                      </div>
+                    </div>
+                  </CardContent>
+                  <CardFooter className="p-4 pt-0 flex justify-between">
+                    {listing.dataCid && (
+                      <Button variant="outline" size="sm" className="text-xs">
+                        Preview Data
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      className="ml-auto bg-secondary hover:bg-secondary/90"
+                      onClick={() => router.push(`/buyer/purchase?id=${listing._id}`)}
+                    >
+                      Buy Now
+                    </Button>
+                  </CardFooter>
+                </Card>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {filteredListings.map((listing) => {
+              const title = listing.deviceMetadata?.deviceName || listing.deviceId
+              const location = listing.deviceMetadata?.location
+                ? `${listing.deviceMetadata.location.latitude}, ${listing.deviceMetadata.location.longitude}`
+                : "Unknown"
+              const dataType = listing.deviceMetadata?.dataTypes?.[0]?.type || "Generic"
+              const frequency = listing.deviceMetadata?.dataTypes?.[0]?.frequency || "unit"
+              const verified = !!listing.txSignature
+
+              return (
+                <Card
+                  key={listing._id}
+                  className="overflow-hidden hover:shadow-lg hover:shadow-primary/5 transition-all duration-300 border-muted"
+                >
+                  <div className="flex flex-col md:flex-row">
+                    <div className="p-4 md:w-2/3">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h3 className="text-lg font-bold">{title}</h3>
+                          <div className="flex items-center text-sm text-muted-foreground mt-1">
+                            <MapPin className="h-3 w-3 mr-1" />
+                            {location}
+                            <span className="mx-2">•</span>
+                            <div className="flex items-center">
+                              {getDeviceIcon(dataType)}
+                              <span className="ml-1">
+                                {dataType.charAt(0).toUpperCase() + dataType.slice(1)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {verified && (
+                            <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20">
+                              <CheckCircle className="h-3 w-3 mr-1" />
+                              Verified
+                            </Badge>
+                          )}
+                          {listing.dataCid && (
+                            <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20">
+                              Preview
+                            </Badge>
+                          )}
                         </div>
                       </div>
 
-                      <div className="text-sm text-muted-foreground mb-6">
-                        <p>Seller: {listing.seller}</p>
+                      <p className="text-sm text-muted-foreground my-4">
+                        Data from {title} ({dataType})
+                      </p>
+
+                      {previewLoading ? (
+                        <p className="text-sm text-muted-foreground">Loading preview...</p>
+                      ) : previewError || !reading ? (
+                        <p className="text-sm text-muted-foreground">No preview available</p>
+                      ) : (
+                        <div className="text-sm text-muted-foreground">
+                          Preview: {JSON.stringify(reading).slice(0, 50)}...
+                        </div>
+                      )}
+
+                      <div className="flex items-center mt-4">
+                        <Star className="h-4 w-4 text-yellow-500 mr-1" />
+                        <span className="text-sm">4.5</span>
+                        <Clock className="h-4 w-4 text-muted-foreground ml-4 mr-1" />
+                        <span className="text-sm text-muted-foreground">Updated recently</span>
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-2">
-                      {listing.preview && (
-                        <Button variant="outline" size="sm">
-                          Preview Data
+                    <div className="p-4 md:w-1/3 bg-muted/30 flex flex-col justify-between">
+                      <div>
+                        <div className="flex justify-between items-center mb-4">
+                          <span className="text-sm text-muted-foreground">Price:</span>
+                          <div className="text-right">
+                            <span className="text-xl font-bold">{listing.pricePerUnit} SOL</span>
+                            <span className="text-xs text-muted-foreground ml-1">/{frequency}</span>
+                          </div>
+                        </div>
+
+                        <div className="text-sm text-muted-foreground mb-6">
+                          <p>Seller: {listing.sellerPubkey.slice(0, 6)}...{listing.sellerPubkey.slice(-4)}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        {listing.dataCid && (
+                          <Button variant="outline" size="sm">
+                            Preview Data
+                          </Button>
+                        )}
+                        <Button
+                          className="bg-secondary hover:bg-secondary/90"
+                          onClick={() => router.push(`/buyer/purchase?id=${listing._id}`)}
+                        >
+                          Buy Now
                         </Button>
-                      )}
-                      <Button
-                        className="bg-secondary hover:bg-secondary/90"
-                        onClick={() => router.push(`/buyer/purchase?id=${listing.id}`)}
-                      >
-                        Buy Now
-                      </Button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </Card>
-            ))}
+                </Card>
+              )
+            })}
           </div>
         )}
 

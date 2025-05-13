@@ -10,6 +10,7 @@ import { BrokerModule } from './broker/broker.module';
 import { ReadingModule }  from './reading/reading.module';
 import { ListingModule } from './listing/listing.module';
 import configuration from './configuration';
+import { RatingModule } from 'rating/rating.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import configuration from './configuration';
     BrokerModule,
     ReadingModule,
     ListingModule,
+    RatingModule,
   ],
 })
 export class AppModule {}

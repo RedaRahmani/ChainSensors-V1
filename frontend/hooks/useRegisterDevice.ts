@@ -7,8 +7,8 @@ export function useRegisterDevice() {
   const { publicKey, signTransaction } = useWallet();
   const { connection } = useConnection();
 
-  const enrollEndpoint = 'http://localhost:3001/dps/enroll';
-  const finalizeEndpoint = 'http://localhost:3001/dps/finalize';
+  const enrollEndpoint = 'http://localhost:3003/dps/enroll';
+  const finalizeEndpoint = 'http://localhost:3003/dps/finalize';
 
   return async (
     csrPem: string,

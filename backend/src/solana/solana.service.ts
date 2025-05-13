@@ -14,6 +14,9 @@ import { BN, Idl } from '@coral-xyz/anchor';
 
 @Injectable()
 export class SolanaService {
+  fetchAllBySeed(programId: anchor.web3.PublicKey, arg1: Buffer<ArrayBuffer>, arg2: anchor.web3.PublicKey) {
+      throw new Error('Method not implemented.');
+  }
   private program: anchor.Program<Idl>;
   private provider: anchor.AnchorProvider;
   private readonly logger = new Logger(SolanaService.name);
@@ -316,5 +319,9 @@ export class SolanaService {
     await this.provider.connection.confirmTransaction(sig, 'confirmed');
     this.logger.log(`Transaction confirmed: ${sig}`);
     return sig;
+  }
+  async submitPurchaseTransaction(params: { listingId: string; buyerPubkey: string; sellerPubkey: string; price: number }) {
+    // Simulate a Solana transaction for now
+    return "mock-tx-signature";
   }
   }

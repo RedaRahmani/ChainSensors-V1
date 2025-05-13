@@ -23,8 +23,8 @@ export function useCreateListing() {
   const { publicKey, signTransaction } = useWallet();
   const { connection } = useConnection();
 
-  const prepareEndpoint = 'http://localhost:3001/listings';
-  const finalizeEndpoint = 'http://localhost:3001/listings/finalize';
+  const prepareEndpoint = 'http://localhost:3003/listings';
+  const finalizeEndpoint = 'http://localhost:3003/listings/finalize';
 
   return async (params: CreateListingParams): Promise<string> => {
     if (!publicKey) throw new Error('Wallet not connected');

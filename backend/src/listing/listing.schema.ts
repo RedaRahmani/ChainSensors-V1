@@ -37,6 +37,12 @@ export class Listing {
     default: ListingStatus.Pending,
   })
   status: ListingStatus;
+    // Add timestamps fields explicitly for TypeScript
+    @Prop({ type: Date })
+    createdAt?: Date;
+  
+    @Prop({ type: Date })
+    updatedAt?: Date;
 }
 
 export const ListingSchema = SchemaFactory.createForClass(Listing);
