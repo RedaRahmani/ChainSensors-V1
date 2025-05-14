@@ -38,16 +38,13 @@ export class BrokerService implements OnModuleInit {
     });
 
     this.broker.on('clientReady', (client) => {
-        // connDetails isn't in the TS defs, so cast to any
         const details = (client as any).connDetails as { certAuthorized?: boolean } | undefined;
         const authorized = details?.certAuthorized ?? false;
         this.logger.log(`Client connected: ${client.id} (authorized=${authorized})`);
       });
     this.broker.on('publish', async (packet, client) => {
-        // only handle real device messages (skip broker or internal)
         if (client && packet.topic.startsWith('devices/') && packet.topic.endsWith('/data')) {
           try {
-            // topic: devices/{deviceId}/data
             const [, deviceId] = packet.topic.split('/');
             const payload = JSON.parse(packet.payload.toString());
             this.logger.debug(`▶ ${client.id} → ${packet.topic}: ${JSON.stringify(payload)}`);

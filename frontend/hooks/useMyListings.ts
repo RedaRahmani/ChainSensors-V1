@@ -1,29 +1,4 @@
-// import { useState, useEffect } from 'react';
-// import { Listing } from '@/hooks/types/listing';
 
-// export function useMyListings(publicKey: string | null) {
-//   const [listings, setListings] = useState<Listing[]>([]);
-//   const [isLoading, setIsLoading] = useState<boolean>(true);
-
-//   useEffect(() => {
-//     if (!publicKey) return;
-//     const fetchListings = async () => {
-//       setIsLoading(true);
-//       try {
-//         const response = await fetch(`/api/listings?publicKey=${publicKey}`);
-//         const data: Listing[] = await response.json();
-//         setListings(data);
-//       } catch (error) {
-//         console.error('Failed to fetch listings:', error);
-//       } finally {
-//         setIsLoading(false);
-//       }
-//     };
-//     fetchListings();
-//   }, [publicKey]);
-
-//   return { listings, isLoading };
-// }
 import useSWR from 'swr';
 import { Listing } from './types/listing';
 

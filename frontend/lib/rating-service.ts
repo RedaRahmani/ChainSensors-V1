@@ -1,4 +1,3 @@
-// This is a mock service that would be replaced with actual API calls in a real application
 
 export interface Review {
     id: string
@@ -46,17 +45,14 @@ export interface Review {
     },
   ]
   
-  // Get a user's review for a specific purchase
   export function getUserReview(userId: string, purchaseId: string): Review | null {
     return reviews.find((review) => review.userId === userId && review.purchaseId === purchaseId) || null
   }
   
-  // Get all reviews for a listing
   export function getListingReviews(listingId: string): Review[] {
     return reviews.filter((review) => review.listingId === listingId)
   }
   
-  // Calculate average rating for a listing
   export function getListingAverageRating(listingId: string): { average: number; count: number } {
     const listingReviews = getListingReviews(listingId)
   
@@ -71,7 +67,6 @@ export interface Review {
     }
   }
   
-  // Add or update a review
   export function saveReview(review: Omit<Review, "id" | "date">): Review {
     const existingReviewIndex = reviews.findIndex((r) => r.userId === review.userId && r.purchaseId === review.purchaseId)
   
@@ -82,10 +77,8 @@ export interface Review {
     }
   
     if (existingReviewIndex >= 0) {
-      // Update existing review
       reviews[existingReviewIndex] = newReview
     } else {
-      // Add new review
       reviews.push(newReview)
     }
   

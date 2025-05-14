@@ -1,4 +1,3 @@
-// frontend/hooks/useLatestReading.ts
 import { useState, useEffect } from "react";
 
 export function useLatestReading(deviceId: string) {

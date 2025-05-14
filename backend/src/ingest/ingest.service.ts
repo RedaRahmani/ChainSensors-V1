@@ -15,28 +15,18 @@ export class IngestService {
     @InjectModel(Reading.name) private readonly readingModel: Model<ReadingDocument>,
   ) {}
 
-  /**
-   * Ingest sensor data for a device:
-   * 1. Verify device exists
-   * 2. Upload data to Walrus
-   * 3. Update lastSeen in device record
-   * 4. Persist a new Reading document
-   */
+
   async uploadData(deviceId: string, data: any) {
-    // 1. Verify device exists
     const device = await this.dpsService.getDevice(deviceId);
     if (!device) {
       throw new NotFoundException(`Device ${deviceId} not registered`);
     }
 
-    // 2. Upload data payload to Walrus
     this.logger.log(`Uploading data for device ${deviceId}`);
     const dataCid = await this.walrusService.uploadData(data);
 
-    // 3. Update device's lastSeen timestamp and latestDataCid
     await this.dpsService.updateLastSeen(deviceId, dataCid);
 
-    // 4. Record the reading in MongoDB
     const reading = await this.readingModel.create({
       deviceId,
       dataCid,

@@ -9,12 +9,12 @@ async function bootstrap() {
     forbidNonWhitelisted: true,
     transform: true }));
   app.enableCors({
-    origin: [/^http:\/\/localhost:\d+$/], // regex for any localhost port
+    origin: [/^http:\/\/localhost:\d+$/], 
   });
   
 
 
-  // Initialize marketplace on Solana (runs once)
+
   const solanaService = app.get(SolanaService);
   try {
     await solanaService.initializeMarketplace();

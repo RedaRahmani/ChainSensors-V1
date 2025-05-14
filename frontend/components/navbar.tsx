@@ -1,34 +1,49 @@
-"use client"
 
-import { useState, useEffect } from "react"
-import Link from "next/link"
-import { usePathname } from "next/navigation"
-import { useWalletContext } from "@/components/wallet-context-provider"
-import { useWallet } from "@solana/wallet-adapter-react"
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui"
-import { Button } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { ChevronDown, LogOut, User, Database, ShoppingCart } from "lucide-react"
-import { cn } from "@/lib/utils"
+"use client";
+
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import dynamic from "next/dynamic";
+import { useWalletContext } from "@/components/wallet-context-provider";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { ChevronDown, LogOut, Database, ShoppingCart } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { signOut, useSession } from "next-auth/react";
+
+const WalletMultiButton = dynamic(
+  () => import("@solana/wallet-adapter-react-ui").then((mod) => mod.WalletMultiButton),
+  { ssr: false, loading: () => <Button disabled>Select Wallet</Button> }
+);
 
 export function Navbar() {
-  const pathname = usePathname()
-  const { connected, userType, setUserType, googleConnected } = useWalletContext()
-  const { disconnect } = useWallet()
-  const [scrolled, setScrolled] = useState(false)
+  const pathname = usePathname();
+  const { connected, userType, setUserType, disconnectGoogle } = useWalletContext();
+  const { data: session } = useSession();
+  const { disconnect } = useWallet();
+  const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
     const handleScroll = () => {
-      setScrolled(window.scrollY > 10)
-    }
-    window.addEventListener("scroll", handleScroll)
-    return () => window.removeEventListener("scroll", handleScroll)
-  }, [])
+      setScrolled(window.scrollY > 10);
+    };
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
   const handleLogout = async () => {
-    await disconnect()
-    setUserType(null)
-  }
+    await disconnect();
+    setUserType(null);
+    disconnectGoogle();
+    await signOut({ callbackUrl: "/" });
+  };
 
   const navLinks = [
     { name: "Home", href: "/" },
@@ -46,13 +61,13 @@ export function Navbar() {
         ]
       : []),
     { name: "About", href: "/about" },
-  ]
+  ];
 
   return (
     <nav
       className={cn(
         "fixed top-0 left-0 right-0 z-50 transition-all duration-300",
-        scrolled ? "bg-black/80 backdrop-blur-md py-2 shadow-md" : "bg-transparent py-4",
+        scrolled ? "bg-black/80 backdrop-blur-md py-2 shadow-md" : "bg-transparent py-4"
       )}
     >
       <div className="container mx-auto flex items-center justify-between">
@@ -74,7 +89,7 @@ export function Navbar() {
               href={link.href}
               className={cn(
                 "text-sm font-medium transition-colors hover:text-primary",
-                pathname === link.href ? "text-primary" : "text-muted-foreground",
+                pathname === link.href ? "text-primary" : "text-muted-foreground"
               )}
             >
               {link.name}
@@ -83,7 +98,11 @@ export function Navbar() {
         </div>
 
         <div className="flex items-center gap-4">
-          {connected ? (
+          {!connected ? (
+            <div className="custom-wallet-button">
+              <WalletMultiButton />
+            </div>
+          ) : (
             <>
               {!userType && (
                 <DropdownMenu>
@@ -108,29 +127,30 @@ export function Navbar() {
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" className="relative rounded-full h-8 w-8 p-0">
-                    <div className="h-8 w-8 rounded-full bg-gradient-to-r from-primary-500 to-secondary-500 flex items-center justify-center">
-                      <User className="h-4 w-4 text-primary-foreground" />
-                    </div>
-                    {googleConnected && (
-                      <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-green-500 border-2 border-background" />
+                    {session?.user?.image ? (
+                      <img
+                        src={session.user.image}
+                        alt="Profile"
+                        className="h-8 w-8 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="h-8 w-8 rounded-full bg-gradient-to-r from-primary-500 to-secondary-500 flex items-center justify-center">
+                        <ShoppingCart className="h-4 w-4 text-primary-foreground" />
+                      </div>
                     )}
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onClick={handleLogout}>
                     <LogOut className="mr-2 h-4 w-4" />
-                    <span>Disconnect Wallet</span>
+                    <span>Disconnect</span>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </>
-          ) : (
-            <div className="custom-wallet-button">
-              <WalletMultiButton />
-            </div>
           )}
         </div>
       </div>
     </nav>
-  )
+  );
 }

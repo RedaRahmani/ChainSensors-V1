@@ -21,9 +21,7 @@ export class ListingService {
     private readonly walrusService: WalrusService,
   ) {}
 
-  /**
-   * Phase 1: Prepare unsigned createListing tx
-   */
+
   async prepareCreateListing(
     dto: CreateListingDto,
     sellerPubkey: PublicKey,
@@ -55,9 +53,7 @@ export class ListingService {
     return { listingId, unsignedTx };
   }
 
-  /**
-   * Phase 2: Finalize with signed tx
-   */
+
   async finalizeCreateListing(
     listingId: string,
     signedTx: string,
@@ -80,9 +76,7 @@ export class ListingService {
     return { txSignature };
   }
 
-  /**
-   * List all listings for a given seller
-   */
+
   async findBySeller(sellerPubkey: PublicKey) {
     return this.listingModel
       .find({ sellerPubkey: sellerPubkey.toBase58() })
@@ -90,9 +84,7 @@ export class ListingService {
       .exec();
   }
 
-  /**
-   * Fetch all active listings
-   */
+
   async findActiveListings() {
     const listings = await this.listingModel.find({ status: ListingStatus.Active }).lean().exec();
     const enrichedListings = await Promise.all(listings.map(async (listing) => {
@@ -111,9 +103,7 @@ export class ListingService {
     return enrichedListings;
   }
 
-   /**
-   * Purchase a listing
-   */
+
    async purchaseListing(listingId: string, buyerPubkey: string) {
     const listing = await this.listingModel.findOne({ listingId });
     if (!listing) {

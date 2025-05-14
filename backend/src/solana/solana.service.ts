@@ -1,4 +1,4 @@
-// src/solana/solana.service.ts
+
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as anchor from '@coral-xyz/anchor';
@@ -22,7 +22,6 @@ export class SolanaService {
   private readonly logger = new Logger(SolanaService.name);
 
   constructor(private configService: ConfigService) {
-    // Initialize Anchor provider and program (authority = your keypair)
     const rpcUrl =
       this.configService.get<string>('SOLANA_RPC') ||
       'https://api.devnet.solana.com';
@@ -38,7 +37,6 @@ export class SolanaService {
     });
     anchor.setProvider(this.provider);
 
-    // Program initialization
     const programIdStr = this.configService.get<string>(
       'SOLANA_PROGRAM_ID',
     );
@@ -46,10 +44,7 @@ export class SolanaService {
     this.program = new anchor.Program(idl as Idl, this.provider);
   }
 
-  /**
-   * One-time initialization of the marketplace on-chain.
-   * Authority = your provider.wallet.publicKey.
-   */
+
   async initializeMarketplace(): Promise<void> {
     const name = this.configService.get<string>('MARKETPLACE_NAME');
     const feeBpsStr = this.configService.get<string>('SELLER_FEE_BASIS');
@@ -65,7 +60,6 @@ export class SolanaService {
     const adminPubkey = this.provider.wallet.publicKey;
     const programId = this.program.programId;
 
-    // Derive PDAs
     const [marketplacePda] = PublicKey.findProgramAddressSync(
       [Buffer.from('marketplace'), adminPubkey.toBuffer()],
       programId,
@@ -75,7 +69,6 @@ export class SolanaService {
       programId,
     );
 
-    // Skip if already initialized
     try {
       await (this.program.account as any)['marketplace'].fetch(
         marketplacePda,
@@ -88,7 +81,6 @@ export class SolanaService {
       this.logger.log('Marketplace not found, proceeding with initialization');
     }
 
-    // Call initialize
     this.logger.log('Initializing marketplace on-chain');
     const tx = await this.program.methods
       .initialize(name, sellerFee)
@@ -108,10 +100,7 @@ export class SolanaService {
     );
   }
 
-  /**
-   * Helper: build an unsigned transaction, attach blockhash + feePayer,
-   * then serialize to base64.
-   */
+
   private async buildUnsignedTx(
     txPromise: Promise<Transaction>,
     feePayer: PublicKey,
@@ -128,10 +117,7 @@ export class SolanaService {
     return serialized.toString('base64');
   }
 
-  /**
-   * Phase 1: Build an unsigned registerDevice tx.
-   * - sellerPubkey must pay fees and sign client-side.
-   */
+  
   async registerDevice(
     deviceId: string,
     ekPubkeyHash: number[],
@@ -149,7 +135,7 @@ export class SolanaService {
   ): Promise<{ unsignedTx: string }> {
     const programId = this.program.programId;
 
-    // PDAs
+
     const [marketplacePda] = PublicKey.findProgramAddressSync(
       [Buffer.from('marketplace'), marketplaceAdmin.toBuffer()],
       programId,
@@ -169,7 +155,6 @@ export class SolanaService {
       `Building registerDevice tx for ${deviceId} (dataCid=${dataCid})`,
     );
 
-    // Build the unsigned tx, but with feePayer = sellerPubkey
     const unsignedTx = await this.buildUnsignedTx(
       this.program.methods
         .registerDevice(
@@ -186,7 +171,7 @@ export class SolanaService {
           expiresAt ? new anchor.BN(expiresAt) : null,
         )
         .accounts({
-          owner: sellerPubkey,           // seller will sign
+          owner: sellerPubkey,           
           marketplace: marketplacePda,
           deviceRegistry: deviceRegistryPda,
           systemProgram: SystemProgram.programId,

@@ -7,7 +7,6 @@ import { RatingController } from './rating.controller';
 
 @Module({
   imports: [
-    // register the Rating schema
     MongooseModule.forFeature([{ name: Rating.name, schema: RatingSchema }]),
   ],
   providers: [RatingService],

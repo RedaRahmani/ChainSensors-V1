@@ -11,9 +11,7 @@ export class ReadingService {
     private readonly walrusService: WalrusService,
   ) {}
 
-  /**
-   * Fetch paginated readings for a given device.
-   */
+
   async findByDevice(
     deviceId: string,
     skip = 0,
@@ -28,10 +26,6 @@ export class ReadingService {
       .exec();
   }
 
-  /**
-   * Fetch the raw JSON payload for a particular reading.
-   * Throws 404 if that blobId isn't associated with this device.
-   */
   async getRaw(deviceId: string, blobId: string): Promise<any> {
     const reading = await this.readingModel
       .findOne({ deviceId, dataCid: blobId })
@@ -42,7 +36,6 @@ export class ReadingService {
         `Reading ${blobId} for device ${deviceId} not found`,
       );
     }
-    // pull the actual JSON from Walrus
     return this.walrusService.getMetadata(blobId);
   }
 }

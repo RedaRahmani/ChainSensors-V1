@@ -1,4 +1,3 @@
-// backend/src/rating/rating.controller.ts
 import { Controller, Post, Get, Body, Param, HttpCode, HttpStatus } from '@nestjs/common';
 import { RatingService } from './rating.service';
 import { CreateRatingDto } from './dto/create-rating.dto';

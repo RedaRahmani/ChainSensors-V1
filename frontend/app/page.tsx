@@ -1,25 +1,25 @@
-"use client"
+"use client";
 
-import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
-import { useWalletContext } from "@/components/wallet-context-provider"
-import { Navbar } from "@/components/navbar"
-import { AuthModal } from "@/components/auth-modal"
-import { Button } from "@/components/ui/button"
-import { ArrowRight, Database, ShoppingCart, Cpu, BarChart3, Shield, Zap } from "lucide-react"
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useWalletContext } from "@/components/wallet-context-provider";
+import { Navbar } from "@/components/navbar";
+import { AuthModal } from "@/components/auth-modal";
+import { Button } from "@/components/ui/button";
+import { ArrowRight, Database, ShoppingCart, Cpu, BarChart3, Shield, Zap } from "lucide-react";
 
 export default function Home() {
-  const router = useRouter()
-  const { connected, userType, setUserType } = useWalletContext()
-  const [showAuthModal, setShowAuthModal] = useState(false)
+  const router = useRouter();
+  const { connected, userType, setUserType } = useWalletContext();
+  const [showAuthModal, setShowAuthModal] = useState(true); // Open modal on load
 
   useEffect(() => {
     if (connected && userType === "seller") {
-      router.push("/seller/dashboard")
+      router.push("/seller/dashboard");
     } else if (connected && userType === "buyer") {
-      router.push("/buyer/marketplace")
+      router.push("/buyer/marketplace");
     }
-  }, [connected, userType, router])
+  }, [connected, userType, router]);
 
   return (
     <main className="min-h-screen flex flex-col">
@@ -53,7 +53,7 @@ export default function Home() {
                   size="lg"
                   className="bg-gradient-to-r from-primary-500 to-secondary-500 hover:opacity-90 transition-all duration-300 animate-glow-pulse"
                 >
-                  Connect Wallet
+                  Get Started
                   <ArrowRight className="ml-2 h-5 w-5" />
                 </Button>
 
@@ -61,10 +61,10 @@ export default function Home() {
                   <Button
                     variant="outline"
                     onClick={() => {
-                      setUserType("seller")
-                      setShowAuthModal(true)
+                      setUserType("seller");
+                      setShowAuthModal(true);
                     }}
-                    className="border-primary/50 text-primary hover:text-primary hover:bg-primary/10 flex-1"
+                    className="border-primary-500/50 text-primary-500 hover:bg-primary-500/10 flex-1"
                   >
                     <Database className="mr-2 h-4 w-4" />
                     Sell Data
@@ -73,10 +73,10 @@ export default function Home() {
                   <Button
                     variant="outline"
                     onClick={() => {
-                      setUserType("buyer")
-                      setShowAuthModal(true)
+                      setUserType("buyer");
+                      setShowAuthModal(true);
                     }}
-                    className="border-secondary/50 text-secondary hover:text-secondary hover:bg-secondary/10 flex-1"
+                    className="border-secondary-500/50 text-secondary-500 hover:bg-secondary-500/10 flex-1"
                   >
                     <ShoppingCart className="mr-2 h-4 w-4" />
                     Buy Data
@@ -203,5 +203,5 @@ export default function Home() {
         </div>
       </section>
     </main>
-  )
+  );
 }

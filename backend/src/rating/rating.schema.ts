@@ -1,4 +1,3 @@
-// backend/src/rating/rating.schema.ts
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
@@ -6,10 +5,10 @@ export type RatingDocument = Rating & Document;
 
 @Schema({ timestamps: true })
 export class Rating {
-  @Prop({ required: true })          // buyer’s wallet pubkey
+  @Prop({ required: true })          
   userPubkey: string;
 
-  @Prop({ required: true })          // the listingId string
+  @Prop({ required: true })        
   listingId: string;
 
   @Prop({ required: true, min: 1, max: 5 })

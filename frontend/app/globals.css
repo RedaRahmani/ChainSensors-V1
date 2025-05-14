@@ -24,6 +24,10 @@
     --input: 240 5.9% 90%;
     --ring: 165 100% 40%;
     --radius: 0.5rem;
+    --primary-500: 0, 204, 153; /* #00CC99 */
+    --secondary-500: 0, 163, 255; /* #00A3FF */
+    --dark-100: 17, 24, 39; /* #111827 */
+    --dark-200: 31, 41, 55; /* #1F2937 */
   }
 
   .dark {
@@ -58,26 +62,74 @@
   }
 }
 
-.glow-primary {
-  box-shadow: 0 0 15px 2px rgba(0, 204, 153, 0.5);
-}
+@layer utilities {
+  .glow-primary {
+    box-shadow: 0 0 15px 2px rgba(0, 204, 153, 0.5);
+  }
 
-.glow-secondary {
-  box-shadow: 0 0 15px 2px rgba(0, 163, 255, 0.5);
-}
+  .glow-secondary {
+    box-shadow: 0 0 15px 2px rgba(0, 163, 255, 0.5);
+  }
 
-.gradient-bg {
-  background: linear-gradient(135deg, rgba(0, 204, 153, 0.1), rgba(0, 163, 255, 0.1));
-}
+  .gradient-bg {
+    background: linear-gradient(135deg, rgba(0, 204, 153, 0.1), rgba(0, 163, 255, 0.1));
+  }
 
-.data-flow-bg {
-  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%2300cc99' fill-opacity='0.1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
-}
+  .data-flow-bg {
+    background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%2300cc99' fill-opacity='0.1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  }
 
-.grid-bg {
-  background-size: 50px 50px;
-  background-image: linear-gradient(to right, rgba(0, 204, 153, 0.05) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(0, 163, 255, 0.05) 1px, transparent 1px);
+  .grid-bg {
+    background-size: 50px 50px;
+    background-image: linear-gradient(to right, rgba(0, 204, 153, 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(0, 163, 255, 0.05) 1px, transparent 1px);
+  }
+
+  /* Radial gradient for hero overlay */
+  .bg-gradient-radial {
+    background-image: radial-gradient(circle at center, transparent 0%, rgba(17, 24, 39, 0.8) 100%);
+  }
+
+  /* Wallet display container */
+  .wallet-display {
+    transition: all 0.3s ease;
+  }
+
+  .wallet-display:hover {
+    border-color: rgba(var(--primary-500), 0.5);
+    box-shadow: 0 0 10px rgba(var(--primary-500), 0.2);
+  }
+
+  /* Wallet item in popup */
+  .wallet-item {
+    transition: all 0.3s ease;
+  }
+
+  .wallet-item:hover {
+    background-color: rgba(var(--primary-500), 0.1);
+  }
+
+  /* Wallet popup overlay */
+  .wallet-popup-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 60;
+  }
+
+  .wallet-popup {
+    max-width: 28rem;
+    width: 90%;
+    background-color: rgb(var(--dark-200));
+    border: 1px solid rgba(var(--primary-500), 0.3);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    box-shadow: 0 4px 6px rgba(var(--primary-500), 0.1);
+    animation: fade-in 0.3s ease-out;
+  }
 }
 
 /* Animations */
@@ -109,6 +161,81 @@
   animation: float 5s ease-in-out infinite;
 }
 
+@keyframes glow-pulse {
+  0%,
+  100% {
+    filter: brightness(100%);
+  }
+  50% {
+    filter: brightness(120%);
+  }
+}
+
+.animate-glow-pulse {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+@keyframes data-flow {
+  0% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: -20;
+  }
+}
+
+.animate-data-flow {
+  animation: data-flow 2s linear infinite;
+}
+
+@keyframes fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+.dialog-content {
+  animation: fade-in 0.3s ease-out;
+}
+
+/* Custom wallet button styling */
+.wallet-adapter-button {
+  background: linear-gradient(to right, rgb(var(--primary-500)), rgb(var(--secondary-500)));
+  color: white;
+  border-radius: 0.375rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  height: 40px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 20;
+  pointer-events: auto !important;
+}
+
+.wallet-adapter-button:hover {
+  opacity: 0.9;
+}
+
+/* Ensure the wallet button container allows interactions */
+.wallet-button-container {
+  position: relative;
+  z-index: 20;
+  pointer-events: auto !important;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
@@ -125,4 +252,9 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 163, 255, 0.5);
+}
+
+[data-radix-dialog-overlay] {
+  pointer-events: none !important;
+  z-index: 5; 
 }

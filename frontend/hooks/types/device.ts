@@ -1,4 +1,3 @@
-// types/device.ts
 export interface EnrollMetadata {
     deviceName: string;
     model: string;

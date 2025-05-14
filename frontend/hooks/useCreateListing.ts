@@ -45,19 +45,15 @@ export function useCreateListing() {
     }
     const { listingId, unsignedTx }: PrepareResponse = await prepareRes.json();
 
-    // Decode the unsigned TX
     const raw = Uint8Array.from(atob(unsignedTx), c => c.charCodeAt(0));
     const tx = Transaction.from(raw);
 
-    // Make sure fee payer is correct
     tx.feePayer = publicKey;
 
-    // Phase 2: have wallet sign it
     const signed = await signTransaction(tx);
     if (!signed) throw new Error('Signing failed');
     const signedBase64 = btoa(String.fromCharCode(...signed.serialize()));
 
-    // Submit signed
     const finalizeRes = await fetch(finalizeEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -122,7 +122,6 @@ export class WalrusService {
     return blobId!;
   }
 
-  /** Retrieve file data via HTTP */
   private async fetchFile(blobId: string): Promise<Buffer> {
     try {
       this.logger.log(`Fetching blob ${blobId}`);
@@ -142,7 +141,6 @@ export class WalrusService {
     }
   }
 
-  /** Upload JSON metadata and return its blobId */
   async uploadMetadata(metadata: any): Promise<string> {
     this.logger.debug(`uploadMetadata called`, metadata);
     const vaultId = await this.getOrCreateVault(metadata.deviceId || 'metadata');
@@ -151,7 +149,6 @@ export class WalrusService {
     return this.uploadFileToVault(buffer, vaultId);
   }
 
-  /** Upload arbitrary sensor data payload */
   async uploadData(data: any): Promise<string> {
     this.logger.debug(`uploadData called`, data);
     const vaultId = await this.getOrCreateVault('sensor-data');
@@ -160,7 +157,6 @@ export class WalrusService {
     return this.uploadFileToVault(buffer, vaultId);
   }
 
-  /** Retrieve and parse JSON metadata */
   async getMetadata(blobId: string): Promise<any> {
     this.logger.debug(`getMetadata called for blobId: ${blobId}`);
     const buffer = await this.fetchFile(blobId);

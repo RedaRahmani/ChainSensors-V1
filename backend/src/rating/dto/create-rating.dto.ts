@@ -1,4 +1,3 @@
-// backend/src/rating/dto/create-rating.dto.ts
 import { IsString, IsNotEmpty, IsNumber, Min, Max, IsOptional, MaxLength } from 'class-validator';
 
 export class CreateRatingDto {
