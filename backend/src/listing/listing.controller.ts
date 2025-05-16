@@ -6,6 +6,9 @@ import {
   HttpCode,
   HttpStatus,
   Request,
+  Logger,
+  BadRequestException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { PublicKey } from '@solana/web3.js';
 import { ListingService } from './listing.service';
@@ -13,6 +16,8 @@ import { CreateListingDto } from './dto/create-listing.dto';
 
 @Controller('listings')
 export class ListingController {
+  private readonly logger = new Logger(ListingController.name);
+
   constructor(private readonly listingService: ListingService) {}
 
   @Post()
@@ -40,9 +45,40 @@ export class ListingController {
     return this.listingService.findActiveListings();
   }
 
-  @Post('purchase')
+  @Post('prepare-purchase')
   @HttpCode(HttpStatus.OK)
-  async purchaseListing(@Body() body: { listingId: string; buyerPubkey: string }) {
-    return this.listingService.purchaseListing(body.listingId, body.buyerPubkey);
+  async preparePurchase(@Body() body: { listingId: string; buyerPubkey: string; unitsRequested: number }) {
+    this.logger.log('POST /listings/prepare-purchase', { body });
+    try {
+      const result = await this.listingService.preparePurchase(body.listingId, new PublicKey(body.buyerPubkey), body.unitsRequested);
+      this.logger.log('preparePurchase response', { result });
+      return result;
+    } catch (error: any) {
+      this.logger.error('preparePurchase failed', { error: error.message, body });
+      throw error;
+    }
+  }
+
+  @Post('finalize-purchase')
+   async finalizePurchase(
+     @Body() body: { listingId: string; signedTx: string; unitsRequested: number },
+   ) {
+    this.logger.log('POST /listings/finalize-purchase', { body });
+    try {
+      const result = await this.listingService.finalizePurchase(body.listingId,
+               body.signedTx,
+               body.unitsRequested,);
+      this.logger.log('finalizePurchase response', { result });
+      return result;
+    } catch (error: any) {
+      this.logger.error('finalizePurchase failed', { error: error.message, stack: error.stack, body });
+      if (error.message.includes('Blockhash not found')) {
+        throw new BadRequestException('Transaction blockhash is stale. Please try again.');
+      }
+      if (error.message.includes('AccountNotInitialized')) {
+        throw new BadRequestException('Buyer USDC token account not initialized.');
+      }
+      throw new InternalServerErrorException(`Failed to finalize purchase: ${error.message}`);
+    }
   }
 }

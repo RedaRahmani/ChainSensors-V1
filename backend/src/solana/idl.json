@@ -213,6 +213,83 @@
       ]
     },
     {
+      "name": "create_rating",
+      "discriminator": [
+        118,
+        110,
+        21,
+        16,
+        46,
+        196,
+        78,
+        117
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "docs": [
+            "The buyer submitting the rating"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "listing_account",
+          "docs": [
+            "The listing being rated (must already exist)"
+          ]
+        },
+        {
+          "name": "rating_account",
+          "docs": [
+            "Our new PDA to hold the rating"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  97,
+                  116,
+                  105,
+                  110,
+                  103
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "listing"
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "listing",
+          "type": "pubkey"
+        },
+        {
+          "name": "rating",
+          "type": "u8"
+        },
+        {
+          "name": "comment",
+          "type": "string"
+        }
+      ]
+    },
+    {
       "name": "initialize",
       "discriminator": [
         175,
@@ -898,6 +975,19 @@
         209,
         2
       ]
+    },
+    {
+      "name": "RatingState",
+      "discriminator": [
+        114,
+        200,
+        94,
+        209,
+        162,
+        189,
+        153,
+        221
+      ]
     }
   ],
   "events": [
@@ -1243,6 +1333,56 @@
           {
             "name": "timestamp",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RatingState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "docs": [
+              "Who paid for/rated (the buyer)"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "listing",
+            "docs": [
+              "Which listing this rating refers to"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "rating",
+            "docs": [
+              "The integer rating (e.g. 1–5)"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "comment",
+            "docs": [
+              "Optional free‑form comment"
+            ],
+            "type": "string"
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "When it was submitted"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "Bump seed for the PDA"
+            ],
+            "type": "u8"
           }
         ]
       }

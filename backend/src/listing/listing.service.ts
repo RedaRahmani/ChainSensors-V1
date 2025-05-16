@@ -46,6 +46,7 @@ export class ListingService {
       totalDataUnits: dto.totalDataUnits,
       expiresAt: dto.expiresAt ?? null,
       unsignedTx,
+      remainingUnits: dto.totalDataUnits,  // ← initialize here
       status: ListingStatus.Pending,
     });
 
@@ -104,30 +105,58 @@ export class ListingService {
   }
 
 
-   async purchaseListing(listingId: string, buyerPubkey: string) {
-    const listing = await this.listingModel.findOne({ listingId });
-    if (!listing) {
-      throw new NotFoundException(`Listing ${listingId} not found`);
-    }
-    if (listing.status !== ListingStatus.Active) {
-      throw new BadRequestException(`Listing ${listingId} is not active`);
-    }
-    if (!listing.sellerPubkey) {
-      throw new BadRequestException(`Seller public key is missing for listing ${listingId}`);
-    }
+   /** Called by your controller to prepare a purchase for the frontend */
+   async preparePurchase(
+    listingId: string,
+    buyerPubkey: PublicKey,
+    unitsRequested: number,
+  ): Promise<{ listingId: string; unsignedTx: string }> {
+    this.logger.log(`preparePurchase: ${listingId}`, { buyer: buyerPubkey.toBase58(), unitsRequested });
 
-    const txSignature = await this.solanaService.submitPurchaseTransaction({
+    const listing = await this.listingModel.findOne({ listingId });
+    if (!listing) throw new NotFoundException(`Listing ${listingId} not found`);
+    if (listing.status !== ListingStatus.Active) throw new BadRequestException(`Listing not active`);
+    if (listing.sellerPubkey === buyerPubkey.toBase58())
+      throw new BadRequestException(`Cannot purchase your own listing`);
+    if (unitsRequested <= 0 || unitsRequested > listing.remainingUnits)
+      throw new BadRequestException(`Invalid units requested`);
+
+    const unsignedTx = await this.solanaService.prepareUnsignedPurchaseTx({
       listingId,
-      buyerPubkey,
-      sellerPubkey: listing.sellerPubkey,
-      price: listing.pricePerUnit * listing.totalDataUnits,
+      buyer: buyerPubkey,
+      seller: new PublicKey(listing.sellerPubkey),
+      unitsRequested,
+      deviceId: listing.deviceId,
     });
 
-    listing.status = ListingStatus.Sold;
-    listing.updatedAt = new Date();
+    listing.unsignedTx = unsignedTx;
     await listing.save();
 
-    this.logger.log(`Listing ${listingId} purchased by ${buyerPubkey}: ${txSignature}`);
+    return { listingId, unsignedTx };
+  }
+
+  /** Called by your controller to submit the signed tx */
+  async finalizePurchase(
+    listingId: string,
+    signedTx: string,
+    unitsRequested: number,
+  ): Promise<{ txSignature: string }> {
+    this.logger.log(`finalizePurchase: ${listingId}`);
+
+    const txSignature = await this.solanaService.submitSignedPurchaseTransaction(signedTx);
+    this.logger.log(`Transaction ${txSignature} confirmed on chain`);
+
+    // Sync remainingUnits from on‑chain
+    // (Alternatively: decrement locally by unitsRequested)
+    const listing = await this.listingModel.findOne({ listingId });
+    if (!listing) throw new NotFoundException(`Listing ${listingId} not found`);
+
+    listing.remainingUnits = listing.remainingUnits - unitsRequested;
+    if (listing.remainingUnits <= 0) {
+      listing.status = ListingStatus.Sold;
+    }
+    await listing.save();
+
     return { txSignature };
   }
 }

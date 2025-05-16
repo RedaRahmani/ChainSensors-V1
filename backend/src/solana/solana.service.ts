@@ -7,8 +7,9 @@ import {
   SystemProgram,
   SYSVAR_RENT_PUBKEY,
   Transaction,
+  SYSVAR_CLOCK_PUBKEY,
 } from '@solana/web3.js';
-import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID , createAssociatedTokenAccountInstruction, getAssociatedTokenAddress, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import idl from './idl.json';
 import { BN, Idl } from '@coral-xyz/anchor';
 
@@ -20,6 +21,10 @@ export class SolanaService {
   private program: anchor.Program<Idl>;
   private provider: anchor.AnchorProvider;
   private readonly logger = new Logger(SolanaService.name);
+  private readonly USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'); // USDC mint (devnet)
+  private readonly TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+  private readonly ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+
 
   constructor(private configService: ConfigService) {
     const rpcUrl =
@@ -244,6 +249,7 @@ export class SolanaService {
     const marketplaceAdmin = new PublicKey(
       this.configService.get<string>('MARKETPLACE_ADMIN_PUBKEY')!,
     );
+    const idBuf = Buffer.from(listingId, 'utf8');
 
     // PDAs
     const [marketplacePda] = PublicKey.findProgramAddressSync(
@@ -258,7 +264,7 @@ export class SolanaService {
       [
         Buffer.from('listing'),
         deviceRegistryPda.toBuffer(),
-        Buffer.from(listingId),
+        idBuf,
       ],
       pid,
     );
@@ -305,8 +311,279 @@ export class SolanaService {
     this.logger.log(`Transaction confirmed: ${sig}`);
     return sig;
   }
-  async submitPurchaseTransaction(params: { listingId: string; buyerPubkey: string; sellerPubkey: string; price: number }) {
-    // Simulate a Solana transaction for now
-    return "mock-tx-signature";
+
+  private async fetchListingState(
+    listingStatePda: PublicKey,
+  ): Promise<{ purchaseCount: BN }> {
+    // If `program.account.listingState` isn't recognized by TS, use bracket syntax:
+    const listingRaw: any = await this.program.account['listingState'].fetch(
+      listingStatePda,
+    );
+    return {
+      purchaseCount: new BN(listingRaw.purchaseCount),
+    };
   }
+  /** Builds an unsigned purchase tx (does *not* sign) */
+/** Builds an unsigned purchase tx (does *not* sign) */
+async buildPurchaseTransaction(
+  listingId: string,
+  buyer: PublicKey,
+  seller: PublicKey,
+  unitsRequested: number,
+  deviceId: string,
+): Promise<{ tx: Transaction }> {
+  const programId = this.program.programId;
+  const marketplaceAdmin = new PublicKey(this.configService.get('MARKETPLACE_ADMIN_PUBKEY')!);
+  const idBuf = Buffer.from(listingId, 'utf8');
+
+  // Derive PDAs
+  const [marketplacePda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('marketplace'), marketplaceAdmin.toBuffer()],
+    programId,
+  );
+  const [treasuryPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('treasury'), marketplacePda.toBuffer()],
+    programId,
+  );
+  const [deviceRegistryPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('device'), marketplacePda.toBuffer(), Buffer.from(deviceId)],
+    programId,
+  );
+  const [listingStatePda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('listing'), deviceRegistryPda.toBuffer(), idBuf],
+    programId,
+  );
+
+  // Fetch on‑chain state to get purchaseCount
+  const { purchaseCount } = await this.fetchListingState(listingStatePda);
+
+  // Derive purchaseRecord PDA
+  const [purchaseRecordPda] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from('purchase'),
+      listingStatePda.toBuffer(),
+      purchaseCount.toArrayLike(Buffer, 'le', 8),
+    ],
+    programId,
+  );
+
+  const buyerAta    = await getAssociatedTokenAddress(this.USDC_MINT, buyer);
+  const sellerAta   = await getAssociatedTokenAddress(this.USDC_MINT, seller);
+  const treasuryAta = await getAssociatedTokenAddress(this.USDC_MINT, treasuryPda, true);
+
+  const tx = new Transaction();
+
+  // ONLY create the buyer's ATA if it's missing
+  const buyerInfo = await this.provider.connection.getAccountInfo(buyerAta);
+  if (!buyerInfo) {
+    this.logger.log(`Creating buyer ATA for ${buyerAta.toBase58()}`);
+    tx.add(
+      createAssociatedTokenAccountInstruction(
+        buyer,    // payer
+        buyerAta, // ATA
+        buyer,    // owner
+        this.USDC_MINT,
+      ),
+    );
   }
+
+  // now attach the CPI to your program
+  const ix = await this.program.methods
+    .purchaseListing(Buffer.from(listingId.padEnd(32, '\0')), new BN(unitsRequested))
+    .accounts({
+      buyer,
+      buyerAta,
+      sellerAta,
+      treasuryAta,
+      listingState: listingStatePda,
+      marketplace: marketplacePda,
+      deviceRegistry: deviceRegistryPda,
+      purchaseRecord: purchaseRecordPda,
+      usdcMint: this.USDC_MINT,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      clock: SYSVAR_CLOCK_PUBKEY,
+      rent: SYSVAR_RENT_PUBKEY,
+    })
+    .instruction();
+  tx.add(ix);
+
+  tx.feePayer = buyer;
+
+  // DEBUG: dump every instruction
+  this.logger.debug('Assembled Purchase TX:');
+  tx.instructions.forEach((ins, idx) => {
+    this.logger.debug(` Instruction ${idx}: programId = ${ins.programId.toBase58()}`);
+    ins.keys.forEach((k, ki) =>
+      this.logger.debug(
+        `   key[${ki}]: ${k.pubkey.toBase58()} signer=${k.isSigner} writable=${k.isWritable}`
+      )
+    );
+  });
+
+  return { tx };
+}
+
+/** Returns base64 of serialized, unsigned tx for frontend to sign */
+async prepareUnsignedPurchaseTx(args: {
+  listingId: string;
+  buyer: PublicKey;
+  seller: PublicKey;
+  unitsRequested: number;
+  deviceId: string;
+}): Promise<string> {
+  const { tx } = await this.buildPurchaseTransaction(
+    args.listingId,
+    args.buyer,
+    args.seller,
+    args.unitsRequested,
+    args.deviceId,
+  );
+  const { blockhash } = await this.provider.connection.getLatestBlockhash('confirmed');
+  tx.recentBlockhash = blockhash;
+  return tx.serialize({ requireAllSignatures: false }).toString('base64');
+}
+
+/** Submits a signed purchase tx and confirms it */
+async submitSignedPurchaseTransaction(signedTxBase64: string): Promise<string> {
+  const raw = Buffer.from(signedTxBase64, 'base64');
+  const sig = await this.provider.connection.sendRawTransaction(raw, {
+    skipPreflight: false,
+    preflightCommitment: 'confirmed',
+    maxRetries: 3,
+  });
+  await this.provider.connection.confirmTransaction(sig, 'confirmed');
+  this.logger.log(`Purchase tx confirmed: ${sig}`);
+  return sig;
+}
+
+
+  }
+
+
+
+
+  //   async submitPurchaseTransaction(
+//     listingId: string,
+//     buyerPubkey: PublicKey,
+//     sellerPubkey: PublicKey,
+//     unitsRequested: number,
+//     pricePerUnit: number,
+//   ): Promise<string> {
+//     this.logger.debug(`Building purchase tx for listing ${listingId}`);
+
+//     const transaction = new Transaction();
+//     const programId = new PublicKey('E3yceGcwF38aFzoJHzmNGGZKEk9bmMqZRNTvQ8ehVms3');
+
+//     // Get buyer's USDC ATA
+//     const buyerAta = await getAssociatedTokenAddress(
+//       this.USDC_MINT,
+//       buyerPubkey,
+//       false,
+//       TOKEN_PROGRAM_ID,
+//       ASSOCIATED_TOKEN_PROGRAM_ID,
+//     );
+
+//     // Check and create buyer's ATA if needed
+//     const buyerAtaInfo = await this.provider.connection.getAccountInfo(buyerAta);
+// if (!buyerAtaInfo) {
+//   this.logger.log(`Buyer ATA ${buyerAta.toBase58()} not found, adding creation instruction`);
+//   transaction.add(
+//     createAssociatedTokenAccountInstruction(
+//       buyerPubkey,
+//       buyerAta,
+//       buyerPubkey,
+//       this.USDC_MINT,
+//       TOKEN_PROGRAM_ID,
+//       ASSOCIATED_TOKEN_PROGRAM_ID,
+//     ),
+//   );
+// } else {
+//   this.logger.log(`Buyer ATA ${buyerAta.toBase58()} exists with ${buyerAtaInfo.data.length} bytes`);
+// }
+
+//     // Get seller's USDC ATA
+//     const sellerAta = await getAssociatedTokenAddress(
+//       this.USDC_MINT,
+//       sellerPubkey,
+//       false,
+//       TOKEN_PROGRAM_ID,
+//       ASSOCIATED_TOKEN_PROGRAM_ID,
+//     );
+
+//     // Add purchase instruction (simplified, adjust based on Anchor IDL)
+//     // const instructionData = Buffer.from(
+//     //   Buffer.concat([
+//     //     Buffer.from([/* discriminator for PurchaseListing */]),
+//     //     Buffer.from(new Uint8Array(new Uint32Array([unitsRequested]).buffer)),
+//     //     Buffer.from(new Uint8Array(new Uint64Array([BigInt(Math.floor(unitsRequested * pricePerUnit * 1e6))]).buffer)), // USDC has 6 decimals
+//     //   ]),
+//     // );
+//     const amount = BigInt(Math.floor(unitsRequested * pricePerUnit * 1e6)); // USDC has 6 decimals
+// const amountBuffer = Buffer.alloc(8); // u64 is 8 bytes
+// amountBuffer.writeBigUInt64LE(amount); // Little-endian encoding for u64
+
+// const instructionData = Buffer.concat([
+//   Buffer.from([
+//     246,
+//     29,
+//     226,
+//     161,
+//     105,
+//     118,
+//     198,
+//     150
+//   ]),
+//   Buffer.from(new Uint8Array(new Uint32Array([unitsRequested]).buffer)), // u32 for unitsRequested
+//   amountBuffer, // u64 for amount
+// ]);
+
+//     transaction.add({
+//       keys: [
+//         { pubkey: buyerPubkey, isSigner: true, isWritable: true },
+//         { pubkey: buyerAta, isSigner: false, isWritable: true },
+//         { pubkey: sellerAta, isSigner: false, isWritable: true },
+//         { pubkey: this.USDC_MINT, isSigner: false, isWritable: false },
+//         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+//         // Add listing PDA or other accounts as required
+//       ],
+//       programId,
+//       data: instructionData,
+//     });
+
+//     // Set recent blockhash and fee payer
+//     const { blockhash } = await this.provider.connection.getLatestBlockhash();
+//     transaction.recentBlockhash = blockhash;
+//     transaction.feePayer = buyerPubkey;
+
+//     // Serialize transaction
+//     const serializedTx = transaction.serialize({ requireAllSignatures: false }).toString('base64');
+//     this.logger.log(`Built unsigned purchase tx for listing ${listingId}`);
+//     return serializedTx;
+//   }
+
+//   async submitSignedPurchaseTransaction(signedTx: string): Promise<string> {
+//     this.logger.log('Submitting signed purchase transaction');
+//     try {
+//       const transaction = Transaction.from(Buffer.from(signedTx, 'base64'));
+//       this.logger.debug(`Using original blockhash: ${transaction.recentBlockhash}`);
+//       const serializedTx = transaction.serialize().toString('base64');
+//       const txSignature = await this.provider.connection.sendEncodedTransaction(serializedTx, {
+//         skipPreflight: false,
+//         preflightCommitment: 'confirmed',
+//         maxRetries: 3,
+//       });
+//       await this.provider.connection.confirmTransaction(txSignature, 'confirmed');
+//       this.logger.log(`Purchase transaction confirmed: ${txSignature}`);
+//       return txSignature;
+//     } catch (error: any) {
+//       this.logger.error('Failed to submit purchase transaction', { error: error.message, stack: error.stack });
+//       if (error.message.includes('Blockhash not found')) {
+//         throw new Error('Transaction blockhash expired. Please try again.');
+//       }
+//       if (error.message.includes('Signature verification failed')) {
+//         throw new Error('Invalid transaction signature. Ensure the correct wallet is used.');
+//       }
+//       throw error;
+//     }
+//   }

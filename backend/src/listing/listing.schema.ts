@@ -21,6 +21,9 @@ export class Listing {
   @Prop({ required: true })
   pricePerUnit: number;
 
+  @Prop({ required: true, default: 100 })
+  remainingUnits: number;
+
   @Prop({ required: true })
   totalDataUnits: number;
 
