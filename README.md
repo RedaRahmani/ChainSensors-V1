@@ -1,7 +1,7 @@
 # ChainSensors
 
 ![ChainSensors Logo](https://i.ibb.co/9kzGWtZZ/Chain-Sensors-Logo.png)
-*Note*: Replace the placeholder above with the ChainSensors logo (e.g., `logo.png`) in your repository. The logo should be 150x150px, using the project’s colors: teal (#00C4B4), navy (#1A2A44), and neon green (#39FF14).
+
 
 ## Overview
 
