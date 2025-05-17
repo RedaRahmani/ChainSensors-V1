@@ -12,7 +12,6 @@ pub struct PurchaseListing<'info> {
         mut,
         associated_token::mint = usdc_mint,
         associated_token::authority = buyer,
-        //constraint = buyer_ata.amount >= price_for_units @ ErrorCode::InsufficientFunds,
     )]
     pub buyer_ata: Account<'info, TokenAccount>,
 
@@ -90,29 +89,31 @@ pub fn handler(
     listing_id: [u8; 32],
     units_requested: u64,
 ) -> Result<()> {
-    // Snapshot immutable fields to avoid borrow conflicts
-    let listing_key = ctx.accounts.listing_state.key();
-    let curr_count = ctx.accounts.listing_state.purchase_count;
-
-    let marketplace = &ctx.accounts.marketplace;
+    let listing = &mut ctx.accounts.listing_state;
     let clock = Clock::get()?;
 
-    // Mutable borrow of listing_state
-    let listing = &mut ctx.accounts.listing_state;
-
-    // ensure still active & not buying own
+    // Basic validation
+    require!(units_requested > 0, ErrorCode::InvalidUnitsRequested);
     require!(listing.status == 0, ErrorCode::ListingNotActive);
     require!(listing.seller != ctx.accounts.buyer.key(), ErrorCode::CannotBuyOwnListing);
 
-    // ensure enough units
+    // Expiry check
+    if let Some(expiry) = listing.expires_at {
+        require!(clock.unix_timestamp <= expiry, ErrorCode::ListingExpired);
+    }
+
+    // Inventory check
     require!(units_requested <= listing.remaining_units, ErrorCode::InsufficientUnits);
 
-    // compute amounts
+    // Compute payment amounts
     let price_for_units = listing.price_per_unit
         .checked_mul(units_requested)
         .ok_or(ErrorCode::MathOverflow)?;
+    // Ensure buyer has sufficient funds
+    require!(ctx.accounts.buyer_ata.amount >= price_for_units, ErrorCode::InsufficientFunds);
+
     let fee = (price_for_units as u128)
-        .checked_mul(marketplace.seller_fee as u128)
+        .checked_mul(ctx.accounts.marketplace.seller_fee as u128)
         .ok_or(ErrorCode::MathOverflow)?
         .checked_div(10_000)
         .ok_or(ErrorCode::MathOverflow)?
@@ -120,20 +121,7 @@ pub fn handler(
         .map_err(|_| ErrorCode::MathOverflow)?;
     let amount_to_seller = price_for_units.checked_sub(fee).ok_or(ErrorCode::MathOverflow)?;
 
-    // 1) transfer buyer → seller
-    token::transfer(
-        CpiContext::new(
-            ctx.accounts.token_program.to_account_info(),
-            token::Transfer {
-                from:      ctx.accounts.buyer_ata.to_account_info(),
-                to:        ctx.accounts.seller_ata.to_account_info(),
-                authority: ctx.accounts.buyer.to_account_info(),
-            },
-        ),
-        amount_to_seller,
-    )?;
-
-    // 2) transfer fee → treasury
+    // 1) Transfer fee → treasury first
     token::transfer(
         CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
@@ -146,29 +134,45 @@ pub fn handler(
         fee,
     )?;
 
-    // 3) update listing state
+    // 2) Transfer remainder → seller
+    token::transfer(
+        CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            token::Transfer {
+                from:      ctx.accounts.buyer_ata.to_account_info(),
+                to:        ctx.accounts.seller_ata.to_account_info(),
+                authority: ctx.accounts.buyer.to_account_info(),
+            },
+        ),
+        amount_to_seller,
+    )?;
+
+    // Update listing state
     listing.remaining_units = listing
         .remaining_units
         .checked_sub(units_requested)
         .ok_or(ErrorCode::MathOverflow)?;
+    listing.updated_at = clock.unix_timestamp;
+    listing.buyer = Some(ctx.accounts.buyer.key());
+
     if listing.remaining_units == 0 {
         listing.status = 1; // Sold out
+        listing.sold_at = Some(clock.unix_timestamp);
     }
-    listing.updated_at = clock.unix_timestamp;
 
-    // 4) populate the PurchaseRecord
+    // Record the purchase
     let record = &mut ctx.accounts.purchase_record;
-    record.listing         = listing_key;
+    record.listing         = listing.key();
     record.buyer           = ctx.accounts.buyer.key();
     record.units_purchased = units_requested;
     record.price_paid      = price_for_units;
     record.fee             = fee;
     record.timestamp       = clock.unix_timestamp;
 
-    // 5) bump the counter so the next purchase gets a fresh PDA
-    listing.purchase_count = curr_count.checked_add(1).unwrap();
+    // Increment purchase counter
+    listing.purchase_count = listing.purchase_count.checked_add(1).unwrap();
 
-    // 6) emit the event for off-chain indexing
+    // Emit event
     emit!(ListingPurchased {
         listing_id,
         buyer:            ctx.accounts.buyer.key(),
@@ -185,16 +189,12 @@ pub fn handler(
 
 #[error_code]
 pub enum ErrorCode {
-    #[msg("Listing is not active")]
-    ListingNotActive,
-    #[msg("Cannot buy your own listing")]
-    CannotBuyOwnListing,
-    #[msg("Device is inactive")]
-    DeviceInactive,
-    #[msg("Insufficient funds")]
-    InsufficientFunds,
-    #[msg("Math overflow")]
-    MathOverflow,
-    #[msg("Insufficient units available")]
-    InsufficientUnits,
+    #[msg("Listing is not active")]        ListingNotActive,
+    #[msg("Cannot buy your own listing")]  CannotBuyOwnListing,
+    #[msg("Listing has expired")]          ListingExpired,
+    #[msg("Invalid number of units requested")] InvalidUnitsRequested,
+    #[msg("Insufficient funds")]            InsufficientFunds,
+    #[msg("Insufficient units available")]   InsufficientUnits,
+    #[msg("Math overflow")]                 MathOverflow,
+    #[msg("Device is inactive")]            DeviceInactive,
 }

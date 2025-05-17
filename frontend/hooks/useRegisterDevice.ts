@@ -19,6 +19,11 @@ export function useRegisterDevice() {
     brokerUrl: string;
     txSignature: string;
   }> => {
+     console.log('[useRegisterDevice] Start registration flow');
+
+    // 1) Wallet checks
+    console.log('[useRegisterDevice] publicKey:', publicKey);
+    console.log('[useRegisterDevice] signTransaction:', !!signTransaction);
     // 1) Wallet checks
     if (!publicKey) {
       throw new Error('Wallet not connected');
@@ -27,17 +32,19 @@ export function useRegisterDevice() {
       throw new Error('Wallet does not support transaction signing');
     }
 
-    // 2) Phase 1: request unsignedTx + cert
+    const enrollBody = {
+      csrPem,
+      metadata,
+      sellerPubkey: publicKey.toString(),
+      token: '123456789',
+    };
+    console.log('[useRegisterDevice] POST', enrollEndpoint, enrollBody);
     const enrollRes = await fetch(enrollEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        csrPem,
-        metadata,
-        sellerPubkey: publicKey.toString(),
-        token: '123456789'
-      }),
+      body: JSON.stringify(enrollBody),
     });
+    console.log('[useRegisterDevice] enroll response status:', enrollRes.status);
     if (!enrollRes.ok) {
       const errText = await enrollRes.text();
       throw new Error(`Enroll failed: ${enrollRes.status} ${errText}`);
