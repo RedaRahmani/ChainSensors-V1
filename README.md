@@ -17,7 +17,7 @@ ChainSensors uses the **Triangle Architecture** for seamless integration:
 
 ## Features
 
-### zk-Compression in Sensor Token and Device Registry
+### zk-Compression
 We integrate zk-compression to optimize the SENSOR token and device registry accounts. IoT data (e.g., PM2.5 readings) is compressed into zero-knowledge proofs, stored in a Merkle tree, reducing account size and cutting transaction fees by 90%+. Proofs are validated on-chain via Anchor smart contracts.
 
 ### Walrus Decentralized Storage
