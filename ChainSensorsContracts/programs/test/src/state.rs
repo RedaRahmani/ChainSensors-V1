@@ -1,91 +1,6 @@
 use anchor_lang::prelude::*;
-use std::convert::Infallible;
-
-
-pub trait ToByteArray {
-    type Error;
-    fn to_byte_array(&self) -> std::result::Result<[u8; 32], Self::Error>;
-}
-
-
-
-impl ToByteArray for Pubkey {
-    type Error = HasherError;
-    fn to_byte_array(&self) -> std::result::Result<[u8; 32], HasherError> {
-        Ok(self.to_bytes())
-    }
-}
-
-impl ToByteArray for [u8; 32] {
-       type Error = HasherError;
-       fn to_byte_array(&self) -> std::result::Result<[u8; 32], HasherError> {
-           Ok(*self)
-       }
-}
-
 use light_account_checks::discriminator::Discriminator;
-
 use light_sdk_macros::{LightDiscriminator, LightHasher};
-
-use anchor_lang::{AnchorDeserialize, AnchorSerialize};
-use light_hasher::{DataHasher, Poseidon, Hasher};
-use light_hasher::HasherError;
-
-//use light_hasher::ToByteArray;
-
-
-#[derive(
-    Clone,
-    Debug,
-    Default,
-    anchor_lang::AnchorDeserialize,
-    anchor_lang::AnchorSerialize,
-    LightDiscriminator,
-    LightHasher,
-)]
-pub struct CounterCompressedAccount {
-    #[hash]
-    pub owner: Pubkey,
-    pub counter: u64,
-}
-
-
-#[derive(
-    Clone,
-    Debug,
-    Default,
-    AnchorDeserialize,
-    AnchorSerialize,
-    LightDiscriminator,
-    LightHasher,
-)]
-pub struct DeviceRegistry {
-    pub owner: Pubkey,
-    pub marketplace: Pubkey,
-    pub device_id: String,
-    pub ek_pubkey_hash: [u8; 32],
-    pub is_active: bool,
-    pub price_per_unit: u64,
-    pub total_data_units: u64,
-    pub data_cid: String,
-    pub access_key_hash: [u8; 32],
-    pub metadata: DeviceMetadata,
-}
-
-#[derive(
-    Clone,
-    Debug,
-    Default,
-    AnchorDeserialize,
-    AnchorSerialize,
-    LightHasher,
-)]
-pub struct DeviceMetadata {
-    pub device_type: String,
-    pub location: String,
-    pub data_type: String,
-    pub data_unit: String,
-}
 
 #[account]
 #[derive(InitSpace)]
@@ -102,6 +17,31 @@ pub struct Marketplace {
     pub created_at: i64,
 }
 
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    anchor_lang::AnchorDeserialize,
+    anchor_lang::AnchorSerialize,
+    LightDiscriminator,
+    LightHasher,
+)]
+pub struct CompressedDeviceRegistry {
+    #[hash]
+    pub owner: Pubkey,
+    #[hash]
+    pub marketplace: Pubkey,
+    #[hash]
+    pub device_id: [u8; 32], // Fixed-size array
+    #[hash]
+    pub ek_pubkey_hash: [u8; 32],
+    pub bump: u8,
+    #[hash]
+    pub device_type: [u8; 32], // Fixed-size array
+    pub created_at: i64,
+    #[hash]
+    pub data_type: [u8; 32], // Fixed-size array
+}
 
 #[account]
 #[derive(InitSpace)]

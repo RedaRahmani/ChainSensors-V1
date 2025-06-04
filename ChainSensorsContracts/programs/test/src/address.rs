@@ -13,7 +13,7 @@ pub fn create_address(
             .key(),
         address_queue_pubkey: remaining_accounts[address_queue_account_index as usize].key(),
     };
-    let seeds = [b"counter", signer.as_ref()];
+    let seeds = [b"device", signer.as_ref()];
 
     let address_seed = light_sdk::address::derive_address_seed(
         seeds.as_slice(),
