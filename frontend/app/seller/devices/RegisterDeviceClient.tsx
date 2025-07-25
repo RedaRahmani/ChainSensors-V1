@@ -46,10 +46,10 @@ const deviceTypes = [
 ];
 
 const dataFrequencies = [
-  { value: "0.016Hz", label: "Every minute" },
-  { value: "0.2Hz", label: "Every 5 minutes" },
-  { value: "0.066Hz", label: "Every 15 minutes" },
-  { value: "0.016Hz", label: "Every 60 minutes" },
+  { value: "0.016Hz",  label: "Every minute"       },
+  { value: "0.2Hz",    label: "Every 5 minutes"    },
+  { value: "0.066Hz",  label: "Every 15 minutes"   },
+  { value: "0.016Hz",  label: "Every 60 minutes"   }, // duplicate value only matters for key
 ];
 
 export default function RegisterDeviceClient() {
@@ -83,25 +83,22 @@ export default function RegisterDeviceClient() {
     setLoading(true);
     setError(null);
     try {
-      // Build metadata for backend
       const metadata: EnrollMetadata = {
         deviceName,
         model: deviceType,
         location: { latitude, longitude },
-        dataTypes: [
-          {
-            type: deviceType,
-            units: deviceTypes.find((t) => t.value === deviceType)?.units || "",
-            frequency: dataFrequency,
-          },
-        ],
-        pricePerUnit: 1, // TODO: add real price input
-        totalDataUnits: dataAccuracy[0] * 10, // e.g. accuracy slider → units
+        dataTypes: [{
+          type: deviceType,
+          units: deviceTypes.find((t) => t.value === deviceType)?.units || "",
+          frequency: dataFrequency,
+        }],
+        pricePerUnit: 1,
+        totalDataUnits: dataAccuracy[0] * 10,
       };
 
       const res = await registerDevice(csrPem, metadata);
       setResult(res);
-      setStep(5); // success page
+      setStep(5);
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Registration failed");
@@ -109,7 +106,6 @@ export default function RegisterDeviceClient() {
       setLoading(false);
     }
   };
-
   // Success view
   if (step === 5 && result) {
     return (
@@ -297,9 +293,10 @@ export default function RegisterDeviceClient() {
                       <SelectValue placeholder="Frequency" />
                     </SelectTrigger>
                     <SelectContent>
-                      {dataFrequencies.map((f) => (
-                        <SelectItem key={f.value} value={f.value}>
-                          {f.label}
+                      {dataFrequencies.map((f, i) => (
+                      // use `i` as the key so React can differentiate them
+                      <SelectItem key={i} value={f.value}>
+                        {f.label}
                         </SelectItem>
                       ))}
                     </SelectContent>

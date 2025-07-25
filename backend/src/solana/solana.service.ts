@@ -202,7 +202,10 @@ export class SolanaService {
     console.log(`this is the raw${raw}`)
     const signature = await this.provider.connection.sendRawTransaction(
       raw,
-      { skipPreflight: false, preflightCommitment: 'confirmed' },
+      {
+        skipPreflight: true,
+        preflightCommitment: 'confirmed',
+      },
     );
     
     await this.provider.connection.confirmTransaction(
@@ -299,18 +302,21 @@ export class SolanaService {
     return { unsignedTx };
   }
 
-  async submitSignedTransactionListing(
-    signedTxBase64: string,
-  ): Promise<string> {
-    const raw = Buffer.from(signedTxBase64, 'base64');
-    const sig = await this.provider.connection.sendRawTransaction(raw, {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed',
-    });
-    await this.provider.connection.confirmTransaction(sig, 'confirmed');
-    this.logger.log(`Transaction confirmed: ${sig}`);
-    return sig;
-  }
+async submitSignedTransactionListing(
+  signedTxBase64: string,
+): Promise<string> {
+  const raw = Buffer.from(signedTxBase64, 'base64');
+  // Skip the preflight simulation to avoid "already processed" errors:
+  const sig = await this.provider.connection.sendRawTransaction(raw, {
+    skipPreflight: true,
+    preflightCommitment: 'confirmed',
+  });
+
+  await this.provider.connection.confirmTransaction(sig, 'confirmed');
+  this.logger.log(`Listing tx confirmed: ${sig}`);
+  return sig;
+}
+
 
   private async fetchListingState(
     listingStatePda: PublicKey,

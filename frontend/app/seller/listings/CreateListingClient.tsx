@@ -182,11 +182,15 @@ export default function CreateListingClient() {
                     <SelectValue placeholder="Choose a registered device" />
                   </SelectTrigger>
                   <SelectContent>
-                    {devices.map((device) => (
-                      <SelectItem key={device.deviceId} value={device.deviceId}>
-                        {device.metadata?.deviceName || "Unnamed Device"} ({device.deviceId})
-                      </SelectItem>
-                    ))}
+                                      {devices.map((device, i) => (
+                    <SelectItem
+                      key={`${device.deviceId}-${i}`}
+                      value={device.deviceId}
+                    >
+                      {device.metadata?.deviceName || "Unnamed Device"} (
+                      {device.deviceId})
+                    </SelectItem>
+                  ))}
                   </SelectContent>
                 </Select>
               </div>
