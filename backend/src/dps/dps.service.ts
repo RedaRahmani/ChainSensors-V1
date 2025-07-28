@@ -14,7 +14,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { PublicKey } from '@solana/web3.js';
 import * as forge from 'node-forge';
 import * as fs from 'fs';
-
+import { RewardService } from '../rewards/reward.service';
 export interface EnrollMetadata {
   deviceName: string;
   model: string;
@@ -39,12 +39,10 @@ export class DpsService {
     @InjectModel(Device.name) private deviceModel: Model<DeviceDocument>,
     private readonly walrusService: WalrusService,
     private readonly solanaService: SolanaService,
-
+    private readonly rewardService: RewardService,
     private readonly configService: ConfigService,
   ) {
-    const adminKey = this.configService.get<string>(
-      'MARKETPLACE_ADMIN_PUBKEY',
-    );
+    const adminKey = this.configService.get<string>('MARKETPLACE_ADMIN_PUBKEY');
     if (!adminKey) throw new Error('MARKETPLACE_ADMIN_PUBKEY not set');
     this.marketplaceAdmin = new PublicKey(adminKey);
 
@@ -62,7 +60,6 @@ export class DpsService {
     this.caCert = forge.pki.certificateFromPem(caCertPem);
   }
 
-
   async generateRegistrationTransaction(
     csrPem: string,
     metadata: EnrollMetadata,
@@ -73,7 +70,6 @@ export class DpsService {
     unsignedTx: string;
     brokerUrl: string;
   }> {
-
     let csr: forge.pki.CertificationRequest;
     try {
       csr = forge.pki.certificationRequestFromPem(csrPem);
@@ -85,18 +81,13 @@ export class DpsService {
       throw new BadRequestException('CSR signature invalid');
     }
 
-
     const cnField = csr.subject.getField('CN');
-    const deviceId =
-      (cnField?.value as string) || uuidv4().replace(/-/g, '');
-
+    const deviceId = (cnField?.value as string) || uuidv4().replace(/-/g, '');
 
     const cert = forge.pki.createCertificate();
     cert.serialNumber = Date.now().toString();
     cert.validity.notBefore = new Date();
-    cert.validity.notAfter = new Date(
-      Date.now() + 365 * 24 * 60 * 60 * 1000,
-    );
+    cert.validity.notAfter = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
     cert.setSubject(csr.subject.attributes);
     cert.setIssuer(this.caCert.issuer.attributes);
     cert.publicKey = csr.publicKey;
@@ -108,13 +99,14 @@ export class DpsService {
     cert.sign(this.caKey, forge.md.sha256.create());
     const certificatePem = forge.pki.certificateToPem(cert);
 
-
     const fullMeta = { ...metadata, deviceId };
     console.log('this is the full metadataaaa', fullMeta);
     this.logger.log(`Uploading metadata for device ${deviceId}`);
     const metadataCid = await this.walrusService.uploadMetadata(fullMeta);
-    console.log('we get a response from walrus and this is the metadatacid :', metadataCid);
-
+    console.log(
+      'we get a response from walrus and this is the metadatacid :',
+      metadataCid,
+    );
 
     const ekHash = Uint8Array.from(metadata.ekPubkeyHash ?? Array(32).fill(0));
     const accessHash = Uint8Array.from(
@@ -126,7 +118,6 @@ export class DpsService {
       units: '',
       frequency: '',
     };
-
 
     this.logger.log(`Building unsigned tx for device ${deviceId}`);
     const { unsignedTx } = await this.solanaService.registerDevice(
@@ -144,9 +135,14 @@ export class DpsService {
       this.marketplaceAdmin,
       sellerPubkey,
     );
-    console.log('we talk with solana service to get the unsigned tx , and this is it ', unsignedTx);
-    this.logger.log(`device id: ${deviceId}   certification pem ${certificatePem}   unsignedtx ${unsignedTx}    brokerurl ${this.brokerUrl}`);
-    const token = '123456789'
+    console.log(
+      'we talk with solana service to get the unsigned tx , and this is it ',
+      unsignedTx,
+    );
+    this.logger.log(
+      `device id: ${deviceId}   certification pem ${certificatePem}   unsignedtx ${unsignedTx}    brokerurl ${this.brokerUrl}`,
+    );
+    const token = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     await this.deviceModel.create({
       deviceId,
@@ -158,42 +154,56 @@ export class DpsService {
       txSignature: null,
       lastSeen: null,
       latestDataCid: null,
-      certificatePem : certificatePem,
+      certificatePem: certificatePem,
     } as any);
-    this.logger.log(`device id: ${deviceId}   certification pem ${certificatePem}   unsignedtx ${unsignedTx}    brokerurl ${this.brokerUrl}`);
+    this.logger.log(
+      `device id: ${deviceId}   certification pem ${certificatePem}   unsignedtx ${unsignedTx}    brokerurl ${this.brokerUrl}`,
+    );
     return { deviceId, certificatePem, unsignedTx, brokerUrl: this.brokerUrl };
   }
-
 
   async finalizeRegistration(
     deviceId: string,
     signedTx: string,
-  ): Promise<{ txSignature: string; brokerUrl: string; certificatePem: string; }> {
-    console.log('we areeeee inside finalizeee ')
+  ): Promise<{
+    txSignature: string;
+    brokerUrl: string;
+    certificatePem: string;
+  }> {
+    console.log('we areeeee inside finalizeee ');
     const device = await this.deviceModel.findOne({ deviceId });
-    console.log(`this issss the device ${device}`)
+    console.log(`this issss the device ${device}`);
     if (!device) {
       throw new NotFoundException(`Device ${deviceId} not found`);
     }
     if (!device.unsignedTx) {
       throw new BadRequestException(`No pending tx for ${deviceId}`);
     }
-    console.log(`this is the insigned tx${device.unsignedTx}`)
-    console.log('send the unsigned tx to solana service to sign it')
+    console.log(`this is the insigned tx${device.unsignedTx}`);
+    console.log('send the unsigned tx to solana service to sign it');
 
-    const txSignature = await this.solanaService.submitSignedTransaction(
-      signedTx,
+    const txSignature =
+      await this.solanaService.submitSignedTransaction(signedTx);
+    console.log(
+      `the unsigned was signed and this is the returne from the solana service ${txSignature}`,
     );
-    console.log(`the unsigned was signed and this is the returne from the solana service ${txSignature}`)
 
     device.txSignature = txSignature;
     device.unsignedTx = null;
-    device.status = 'complete'
+    device.status = 'complete';
     await device.save();
+    // 2️⃣ Reward the user for registering a device:
+    await this.rewardService.rewardFor(
+      device.sellerPubkey, // their wallet address
+      'deviceRegistration', // matches reward.rules.ts key
+    );
 
-    return { txSignature, brokerUrl: this.brokerUrl, certificatePem: device.certificatePem, };
+    return {
+      txSignature,
+      brokerUrl: this.brokerUrl,
+      certificatePem: device.certificatePem,
+    };
   }
-
 
   async updateLastSeen(deviceId: string, dataCid: string) {
     const device = await this.deviceModel.findOne({ deviceId });
@@ -202,7 +212,6 @@ export class DpsService {
     device.latestDataCid = dataCid;
     await device.save();
   }
-
 
   listDevices(filter: { sellerPubkey?: string } = {}) {
     return this.deviceModel.find(filter).lean().exec();

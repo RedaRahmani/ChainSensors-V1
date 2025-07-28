@@ -14,7 +14,6 @@ export class CreateListingDto {
   @IsNotEmpty()
   dataCid: string;
 
-
   @IsNumber()
   @Min(1)
   pricePerUnit: number;
@@ -24,7 +23,7 @@ export class CreateListingDto {
   totalDataUnits: number;
 
   @IsString()
-  sellerPubkey : string;
+  sellerPubkey: string;
 
   @IsOptional()
   @IsNumber()

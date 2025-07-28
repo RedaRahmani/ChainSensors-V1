@@ -1,4 +1,3 @@
-
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as anchor from '@coral-xyz/anchor';
@@ -9,22 +8,37 @@ import {
   Transaction,
   SYSVAR_CLOCK_PUBKEY,
 } from '@solana/web3.js';
-import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID , createAssociatedTokenAccountInstruction, getAssociatedTokenAddress, getAssociatedTokenAddressSync } from '@solana/spl-token';
+import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountInstruction,
+  getAssociatedTokenAddress,
+  getAssociatedTokenAddressSync,
+} from '@solana/spl-token';
 import idl from './idl.json';
 import { BN, Idl } from '@coral-xyz/anchor';
 
 @Injectable()
 export class SolanaService {
-  fetchAllBySeed(programId: anchor.web3.PublicKey, arg1: Buffer<ArrayBuffer>, arg2: anchor.web3.PublicKey) {
-      throw new Error('Method not implemented.');
+  fetchAllBySeed(
+    programId: anchor.web3.PublicKey,
+    arg1: Buffer<ArrayBuffer>,
+    arg2: anchor.web3.PublicKey,
+  ) {
+    throw new Error('Method not implemented.');
   }
   private program: anchor.Program<Idl>;
   private provider: anchor.AnchorProvider;
   private readonly logger = new Logger(SolanaService.name);
-  private readonly USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'); // USDC mint (devnet)
-  private readonly TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
-  private readonly ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
-
+  private readonly USDC_MINT = new PublicKey(
+    'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+  ); // USDC mint (devnet)
+  private readonly TOKEN_PROGRAM_ID = new PublicKey(
+    'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+  );
+  private readonly ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
+    'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',
+  );
 
   constructor(private configService: ConfigService) {
     const rpcUrl =
@@ -42,13 +56,10 @@ export class SolanaService {
     });
     anchor.setProvider(this.provider);
 
-    const programIdStr = this.configService.get<string>(
-      'SOLANA_PROGRAM_ID',
-    );
+    const programIdStr = this.configService.get<string>('SOLANA_PROGRAM_ID');
     if (!programIdStr) throw new Error('SOLANA_PROGRAM_ID not set');
     this.program = new anchor.Program(idl as Idl, this.provider);
   }
-
 
   async initializeMarketplace(): Promise<void> {
     const name = this.configService.get<string>('MARKETPLACE_NAME');
@@ -75,9 +86,7 @@ export class SolanaService {
     );
 
     try {
-      await (this.program.account as any)['marketplace'].fetch(
-        marketplacePda,
-      );
+      await (this.program.account as any)['marketplace'].fetch(marketplacePda);
       this.logger.log(
         'Marketplace already initialized at ' + marketplacePda.toBase58(),
       );
@@ -87,32 +96,68 @@ export class SolanaService {
     }
 
     this.logger.log('Initializing marketplace on-chain');
-    const tx = await this.program.methods
-      .initialize(name, sellerFee)
-      .accounts({
-        admin: adminPubkey,
-        marketplace: marketplacePda,
-        treasury: treasuryPda,
-        usdcMint,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
-        rent: SYSVAR_RENT_PUBKEY,
-      })
-      .rpc();
+    // Solana RPC fallback logic
+    const rpcList = [
+      this.configService.get<string>('SOLANA_RPC'),
+      'https://api.devnet.solana.com',
+      'https://api.helius.xyz/v0/solana',
+      'https://api.mainnet-beta.solana.com',
+    ].filter(Boolean);
+    let initialized = false;
+    let lastError = null;
+    for (const rpc of rpcList) {
+      try {
+        // Re-instantiate provider/program with new RPC
+        const keypairJson = process.env.SOLANA_KEYPAIR_JSON;
+        const keypair = anchor.web3.Keypair.fromSecretKey(
+          Uint8Array.from(JSON.parse(keypairJson)),
+        );
+        const wallet = new anchor.Wallet(keypair);
+        const connection = new anchor.web3.Connection(rpc, 'confirmed');
+        this.provider = new anchor.AnchorProvider(connection, wallet, {
+          commitment: 'confirmed',
+        });
+        anchor.setProvider(this.provider);
+        this.program = new anchor.Program(idl as Idl, this.provider);
 
-    this.logger.log(
-      `Marketplace initialized (tx: ${tx}) at PDA ${marketplacePda.toBase58()}`,
-    );
+        const tx = await this.program.methods
+          .initialize(name, sellerFee)
+          .accounts({
+            admin: adminPubkey,
+            marketplace: marketplacePda,
+            treasury: treasuryPda,
+            usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+            rent: SYSVAR_RENT_PUBKEY,
+          })
+          .rpc();
+        this.logger.log(
+          `Marketplace initialized (tx: ${tx}) at PDA ${marketplacePda.toBase58()} using RPC ${rpc}`,
+        );
+        initialized = true;
+        break;
+      } catch (error) {
+        this.logger.warn(
+          `Marketplace initialization failed on RPC ${rpc}: ${error.message}`,
+        );
+        lastError = error;
+      }
+    }
+    if (!initialized) {
+      this.logger.warn(
+        `Marketplace initialization failed on all RPCs - continuing without marketplace: ${lastError?.message}`,
+      );
+      // Continue without crashing the app
+    }
   }
-
 
   private async buildUnsignedTx(
     txPromise: Promise<Transaction>,
     feePayer: PublicKey,
   ): Promise<string> {
     const tx = await txPromise;
-    const { blockhash } =
-      await this.provider.connection.getLatestBlockhash();
+    const { blockhash } = await this.provider.connection.getLatestBlockhash();
     tx.recentBlockhash = blockhash;
     tx.feePayer = feePayer;
     const serialized = tx.serialize({
@@ -122,7 +167,6 @@ export class SolanaService {
     return serialized.toString('base64');
   }
 
-  
   async registerDevice(
     deviceId: string,
     ekPubkeyHash: number[],
@@ -140,18 +184,13 @@ export class SolanaService {
   ): Promise<{ unsignedTx: string }> {
     const programId = this.program.programId;
 
-
     const [marketplacePda] = PublicKey.findProgramAddressSync(
       [Buffer.from('marketplace'), marketplaceAdmin.toBuffer()],
       programId,
     );
     console.log('this is marketplace pda:', marketplacePda);
     const [deviceRegistryPda] = PublicKey.findProgramAddressSync(
-      [
-        Buffer.from('device'),
-        marketplacePda.toBuffer(),
-        Buffer.from(deviceId),
-      ],
+      [Buffer.from('device'), marketplacePda.toBuffer(), Buffer.from(deviceId)],
       programId,
     );
     console.log('this is device registry pda:', deviceRegistryPda);
@@ -176,7 +215,7 @@ export class SolanaService {
           expiresAt ? new anchor.BN(expiresAt) : null,
         )
         .accounts({
-          owner: sellerPubkey,           
+          owner: sellerPubkey,
           marketplace: marketplacePda,
           deviceRegistry: deviceRegistryPda,
           systemProgram: SystemProgram.programId,
@@ -194,28 +233,19 @@ export class SolanaService {
   /**
    * Phase 2: Submit a seller-signed transaction.
    */
-  async submitSignedTransaction(
-    signedTxBase64: string,
-  ): Promise<string> {
-    console.log("inside finale signing in solana service")
+  async submitSignedTransaction(signedTxBase64: string): Promise<string> {
+    console.log('inside finale signing in solana service');
     const raw = Buffer.from(signedTxBase64, 'base64');
-    console.log(`this is the raw${raw}`)
-    const signature = await this.provider.connection.sendRawTransaction(
-      raw,
-      {
-        skipPreflight: true,
-        preflightCommitment: 'confirmed',
-      },
-    );
-    
-    await this.provider.connection.confirmTransaction(
-      signature,
-      'confirmed',
-    );
+    console.log(`this is the raw${raw}`);
+    const signature = await this.provider.connection.sendRawTransaction(raw, {
+      skipPreflight: true,
+      preflightCommitment: 'confirmed',
+    });
+
+    await this.provider.connection.confirmTransaction(signature, 'confirmed');
     this.logger.log(`Submitted & confirmed tx ${signature}`);
     return signature;
   }
-
 
   private async buildUnsignedTxListing(
     txPromise: Promise<Transaction>,
@@ -264,11 +294,7 @@ export class SolanaService {
       pid,
     );
     const [listingStatePda] = PublicKey.findProgramAddressSync(
-      [
-        Buffer.from('listing'),
-        deviceRegistryPda.toBuffer(),
-        idBuf,
-      ],
+      [Buffer.from('listing'), deviceRegistryPda.toBuffer(), idBuf],
       pid,
     );
 
@@ -292,184 +318,205 @@ export class SolanaService {
       });
 
     // Optional debug
-    this.logger.debug('IDL args:', this.program.idl.instructions.find(i => i.name === 'createListing')?.args);
-    this.logger.debug('Call values:', [listingId, dataCid, pricePerUnit, deviceId, totalDataUnits, expiresAt]);
+    this.logger.debug(
+      'IDL args:',
+      this.program.idl.instructions.find((i) => i.name === 'createListing')
+        ?.args,
+    );
+    this.logger.debug('Call values:', [
+      listingId,
+      dataCid,
+      pricePerUnit,
+      deviceId,
+      totalDataUnits,
+      expiresAt,
+    ]);
 
     // Serialize unsigned transaction
     const txPromise = builder.transaction();
-    const unsignedTx = await this.buildUnsignedTxListing(txPromise, sellerPubkey);
+    const unsignedTx = await this.buildUnsignedTxListing(
+      txPromise,
+      sellerPubkey,
+    );
     this.logger.log(`Built unsigned createListing tx`);
     return { unsignedTx };
   }
 
-async submitSignedTransactionListing(
-  signedTxBase64: string,
-): Promise<string> {
-  const raw = Buffer.from(signedTxBase64, 'base64');
-  // Skip the preflight simulation to avoid "already processed" errors:
-  const sig = await this.provider.connection.sendRawTransaction(raw, {
-    skipPreflight: true,
-    preflightCommitment: 'confirmed',
-  });
+  async submitSignedTransactionListing(
+    signedTxBase64: string,
+  ): Promise<string> {
+    const raw = Buffer.from(signedTxBase64, 'base64');
+    // Skip the preflight simulation to avoid "already processed" errors:
+    const sig = await this.provider.connection.sendRawTransaction(raw, {
+      skipPreflight: true,
+      preflightCommitment: 'confirmed',
+    });
 
-  await this.provider.connection.confirmTransaction(sig, 'confirmed');
-  this.logger.log(`Listing tx confirmed: ${sig}`);
-  return sig;
-}
-
+    await this.provider.connection.confirmTransaction(sig, 'confirmed');
+    this.logger.log(`Listing tx confirmed: ${sig}`);
+    return sig;
+  }
 
   private async fetchListingState(
     listingStatePda: PublicKey,
   ): Promise<{ purchaseCount: BN }> {
     // If `program.account.listingState` isn't recognized by TS, use bracket syntax:
-    const listingRaw: any = await this.program.account['listingState'].fetch(
-      listingStatePda,
-    );
+    const listingRaw: any =
+      await this.program.account['listingState'].fetch(listingStatePda);
     return {
       purchaseCount: new BN(listingRaw.purchaseCount),
     };
   }
   /** Builds an unsigned purchase tx (does *not* sign) */
-/** Builds an unsigned purchase tx (does *not* sign) */
-async buildPurchaseTransaction(
-  listingId: string,
-  buyer: PublicKey,
-  seller: PublicKey,
-  unitsRequested: number,
-  deviceId: string,
-): Promise<{ tx: Transaction }> {
-  const programId = this.program.programId;
-  const marketplaceAdmin = new PublicKey(this.configService.get('MARKETPLACE_ADMIN_PUBKEY')!);
-  const idBuf = Buffer.from(listingId, 'utf8');
-
-  // Derive PDAs
-  const [marketplacePda] = PublicKey.findProgramAddressSync(
-    [Buffer.from('marketplace'), marketplaceAdmin.toBuffer()],
-    programId,
-  );
-  const [treasuryPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from('treasury'), marketplacePda.toBuffer()],
-    programId,
-  );
-  const [deviceRegistryPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from('device'), marketplacePda.toBuffer(), Buffer.from(deviceId)],
-    programId,
-  );
-  const [listingStatePda] = PublicKey.findProgramAddressSync(
-    [Buffer.from('listing'), deviceRegistryPda.toBuffer(), idBuf],
-    programId,
-  );
-
-  // Fetch on‑chain state to get purchaseCount
-  const { purchaseCount } = await this.fetchListingState(listingStatePda);
-
-  // Derive purchaseRecord PDA
-  const [purchaseRecordPda] = PublicKey.findProgramAddressSync(
-    [
-      Buffer.from('purchase'),
-      listingStatePda.toBuffer(),
-      purchaseCount.toArrayLike(Buffer, 'le', 8),
-    ],
-    programId,
-  );
-
-  const buyerAta    = await getAssociatedTokenAddress(this.USDC_MINT, buyer);
-  const sellerAta   = await getAssociatedTokenAddress(this.USDC_MINT, seller);
-  const treasuryAta = await getAssociatedTokenAddress(this.USDC_MINT, treasuryPda, true);
-
-  const tx = new Transaction();
-
-  // ONLY create the buyer's ATA if it's missing
-  const buyerInfo = await this.provider.connection.getAccountInfo(buyerAta);
-  if (!buyerInfo) {
-    this.logger.log(`Creating buyer ATA for ${buyerAta.toBase58()}`);
-    tx.add(
-      createAssociatedTokenAccountInstruction(
-        buyer,    // payer
-        buyerAta, // ATA
-        buyer,    // owner
-        this.USDC_MINT,
-      ),
+  /** Builds an unsigned purchase tx (does *not* sign) */
+  async buildPurchaseTransaction(
+    listingId: string,
+    buyer: PublicKey,
+    seller: PublicKey,
+    unitsRequested: number,
+    deviceId: string,
+  ): Promise<{ tx: Transaction }> {
+    const programId = this.program.programId;
+    const marketplaceAdmin = new PublicKey(
+      this.configService.get('MARKETPLACE_ADMIN_PUBKEY')!,
     );
-  }
+    const idBuf = Buffer.from(listingId, 'utf8');
 
-  // now attach the CPI to your program
-  const ix = await this.program.methods
-    .purchaseListing(Buffer.from(listingId.padEnd(32, '\0')), new BN(unitsRequested))
-    .accounts({
-      buyer,
-      buyerAta,
-      sellerAta,
-      treasuryAta,
-      listingState: listingStatePda,
-      marketplace: marketplacePda,
-      deviceRegistry: deviceRegistryPda,
-      purchaseRecord: purchaseRecordPda,
-      usdcMint: this.USDC_MINT,
-      tokenProgram: TOKEN_PROGRAM_ID,
-      systemProgram: SystemProgram.programId,
-      clock: SYSVAR_CLOCK_PUBKEY,
-      rent: SYSVAR_RENT_PUBKEY,
-    })
-    .instruction();
-  tx.add(ix);
+    // Derive PDAs
+    const [marketplacePda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('marketplace'), marketplaceAdmin.toBuffer()],
+      programId,
+    );
+    const [treasuryPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('treasury'), marketplacePda.toBuffer()],
+      programId,
+    );
+    const [deviceRegistryPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('device'), marketplacePda.toBuffer(), Buffer.from(deviceId)],
+      programId,
+    );
+    const [listingStatePda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('listing'), deviceRegistryPda.toBuffer(), idBuf],
+      programId,
+    );
 
-  tx.feePayer = buyer;
+    // Fetch on‑chain state to get purchaseCount
+    const { purchaseCount } = await this.fetchListingState(listingStatePda);
 
-  // DEBUG: dump every instruction
-  this.logger.debug('Assembled Purchase TX:');
-  tx.instructions.forEach((ins, idx) => {
-    this.logger.debug(` Instruction ${idx}: programId = ${ins.programId.toBase58()}`);
-    ins.keys.forEach((k, ki) =>
-      this.logger.debug(
-        `   key[${ki}]: ${k.pubkey.toBase58()} signer=${k.isSigner} writable=${k.isWritable}`
+    // Derive purchaseRecord PDA
+    const [purchaseRecordPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from('purchase'),
+        listingStatePda.toBuffer(),
+        purchaseCount.toArrayLike(Buffer, 'le', 8),
+      ],
+      programId,
+    );
+
+    const buyerAta = await getAssociatedTokenAddress(this.USDC_MINT, buyer);
+    const sellerAta = await getAssociatedTokenAddress(this.USDC_MINT, seller);
+    const treasuryAta = await getAssociatedTokenAddress(
+      this.USDC_MINT,
+      treasuryPda,
+      true,
+    );
+
+    const tx = new Transaction();
+
+    // ONLY create the buyer's ATA if it's missing
+    const buyerInfo = await this.provider.connection.getAccountInfo(buyerAta);
+    if (!buyerInfo) {
+      this.logger.log(`Creating buyer ATA for ${buyerAta.toBase58()}`);
+      tx.add(
+        createAssociatedTokenAccountInstruction(
+          buyer, // payer
+          buyerAta, // ATA
+          buyer, // owner
+          this.USDC_MINT,
+        ),
+      );
+    }
+
+    // now attach the CPI to your program
+    const ix = await this.program.methods
+      .purchaseListing(
+        Buffer.from(listingId.padEnd(32, '\0')),
+        new BN(unitsRequested),
       )
-    );
-  });
+      .accounts({
+        buyer,
+        buyerAta,
+        sellerAta,
+        treasuryAta,
+        listingState: listingStatePda,
+        marketplace: marketplacePda,
+        deviceRegistry: deviceRegistryPda,
+        purchaseRecord: purchaseRecordPda,
+        usdcMint: this.USDC_MINT,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        clock: SYSVAR_CLOCK_PUBKEY,
+        rent: SYSVAR_RENT_PUBKEY,
+      })
+      .instruction();
+    tx.add(ix);
 
-  return { tx };
-}
+    tx.feePayer = buyer;
 
-/** Returns base64 of serialized, unsigned tx for frontend to sign */
-async prepareUnsignedPurchaseTx(args: {
-  listingId: string;
-  buyer: PublicKey;
-  seller: PublicKey;
-  unitsRequested: number;
-  deviceId: string;
-}): Promise<string> {
-  const { tx } = await this.buildPurchaseTransaction(
-    args.listingId,
-    args.buyer,
-    args.seller,
-    args.unitsRequested,
-    args.deviceId,
-  );
-  const { blockhash } = await this.provider.connection.getLatestBlockhash('confirmed');
-  tx.recentBlockhash = blockhash;
-  return tx.serialize({ requireAllSignatures: false }).toString('base64');
-}
+    // DEBUG: dump every instruction
+    this.logger.debug('Assembled Purchase TX:');
+    tx.instructions.forEach((ins, idx) => {
+      this.logger.debug(
+        ` Instruction ${idx}: programId = ${ins.programId.toBase58()}`,
+      );
+      ins.keys.forEach((k, ki) =>
+        this.logger.debug(
+          `   key[${ki}]: ${k.pubkey.toBase58()} signer=${k.isSigner} writable=${k.isWritable}`,
+        ),
+      );
+    });
 
-/** Submits a signed purchase tx and confirms it */
-async submitSignedPurchaseTransaction(signedTxBase64: string): Promise<string> {
-  const raw = Buffer.from(signedTxBase64, 'base64');
-  const sig = await this.provider.connection.sendRawTransaction(raw, {
-    skipPreflight: false,
-    preflightCommitment: 'confirmed',
-    maxRetries: 3,
-  });
-  await this.provider.connection.confirmTransaction(sig, 'confirmed');
-  this.logger.log(`Purchase tx confirmed: ${sig}`);
-  return sig;
-}
-
-
+    return { tx };
   }
 
+  /** Returns base64 of serialized, unsigned tx for frontend to sign */
+  async prepareUnsignedPurchaseTx(args: {
+    listingId: string;
+    buyer: PublicKey;
+    seller: PublicKey;
+    unitsRequested: number;
+    deviceId: string;
+  }): Promise<string> {
+    const { tx } = await this.buildPurchaseTransaction(
+      args.listingId,
+      args.buyer,
+      args.seller,
+      args.unitsRequested,
+      args.deviceId,
+    );
+    const { blockhash } =
+      await this.provider.connection.getLatestBlockhash('confirmed');
+    tx.recentBlockhash = blockhash;
+    return tx.serialize({ requireAllSignatures: false }).toString('base64');
+  }
 
+  /** Submits a signed purchase tx and confirms it */
+  async submitSignedPurchaseTransaction(
+    signedTxBase64: string,
+  ): Promise<string> {
+    const raw = Buffer.from(signedTxBase64, 'base64');
+    const sig = await this.provider.connection.sendRawTransaction(raw, {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+      maxRetries: 3,
+    });
+    await this.provider.connection.confirmTransaction(sig, 'confirmed');
+    this.logger.log(`Purchase tx confirmed: ${sig}`);
+    return sig;
+  }
+}
 
-
-  //   async submitPurchaseTransaction(
+//   async submitPurchaseTransaction(
 //     listingId: string,
 //     buyerPubkey: PublicKey,
 //     sellerPubkey: PublicKey,

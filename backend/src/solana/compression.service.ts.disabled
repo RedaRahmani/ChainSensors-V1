@@ -1,0 +1,63 @@
+// backend/src/solana/compression.service.ts
+
+import { Injectable, Logger } from '@nestjs/common';
+import { Connection, Keypair, PublicKey, TransactionInstruction } from '@solana/web3.js';
+import { createRpc } from '@lightprotocol/stateless.js';
+import { createMint } from '@lightprotocol/compressed-token';
+
+@Injectable()
+export class CompressionService {
+  private readonly logger = new Logger(CompressionService.name);
+  private connection: Connection;
+  private rpc: ReturnType<typeof createRpc>;
+  private payer: Keypair;
+  private mint: PublicKey;
+  private tree: PublicKey;
+
+  constructor() {
+    // 1) Load RPC & payer
+    this.connection = new Connection(process.env.SOLANA_RPC!, 'confirmed');
+    const secret = JSON.parse(process.env.SOLANA_KEYPAIR_JSON!);
+    this.payer = Keypair.fromSecretKey(Uint8Array.from(secret));
+
+    // 2) Create the Light Protocol RPC client:
+    //    createRpc(options: { connection: Connection; wallet: Signer })
+    this.rpc = createRpc({ connection: this.connection, wallet: this.payer });
+
+    // 3) Load your mint & tree from .env
+    this.mint = new PublicKey(process.env.SENSOR_MINT!);
+    this.tree = new PublicKey(process.env.SENSOR_TREE!);
+  }
+
+  /**
+   * Mint `amount` SENSOR tokens (compressed) to `to`
+   */
+  async mintSensor(args: { to: string; amount: number }): Promise<string> {
+    // 1) Build the compressed-mint instruction:
+    //    createMint(rpc, {
+    //      mint, tree, mintAuthority, payer, recipient, amount, decimals
+    //    }) => Promise<TransactionInstruction>
+    const mintIx: TransactionInstruction = await createMint(this.rpc, {
+      mint:            this.mint,
+      tree:            this.tree,
+      mintAuthority:   this.payer.publicKey,
+      payer:           this.payer.publicKey,
+      recipient:       new PublicKey(args.to),
+      amount:          args.amount,
+      decimals:        6,
+    });
+
+    // 2) Send & confirm in one go:
+    //    rpc.sendTransaction(params: { instructions, signers })
+    const txSignature = await this.rpc.sendTransaction({
+      instructions: [mintIx],
+      signers:      [this.payer],
+    });
+
+    // 3) Final confirmation
+    await this.connection.confirmTransaction(txSignature, 'confirmed');
+
+    this.logger.log(`Minted ${args.amount} SENSOR to ${args.to} — tx ${txSignature}`);
+    return txSignature;
+  }
+}

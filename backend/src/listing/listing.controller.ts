@@ -30,7 +30,10 @@ export class ListingController {
   @Post('finalize')
   @HttpCode(HttpStatus.OK)
   async finalize(@Body() body: { listingId: string; signedTx: string }) {
-    return this.listingService.finalizeCreateListing(body.listingId, body.signedTx);
+    return this.listingService.finalizeCreateListing(
+      body.listingId,
+      body.signedTx,
+    );
   }
 
   @Post('by-seller')
@@ -47,38 +50,69 @@ export class ListingController {
 
   @Post('prepare-purchase')
   @HttpCode(HttpStatus.OK)
-  async preparePurchase(@Body() body: { listingId: string; buyerPubkey: string; unitsRequested: number }) {
+  async preparePurchase(
+    @Body()
+    body: {
+      listingId: string;
+      buyerPubkey: string;
+      unitsRequested: number;
+    },
+  ) {
     this.logger.log('POST /listings/prepare-purchase', { body });
     try {
-      const result = await this.listingService.preparePurchase(body.listingId, new PublicKey(body.buyerPubkey), body.unitsRequested);
+      const result = await this.listingService.preparePurchase(
+        body.listingId,
+        new PublicKey(body.buyerPubkey),
+        body.unitsRequested,
+      );
       this.logger.log('preparePurchase response', { result });
       return result;
     } catch (error: any) {
-      this.logger.error('preparePurchase failed', { error: error.message, body });
+      this.logger.error('preparePurchase failed', {
+        error: error.message,
+        body,
+      });
       throw error;
     }
   }
 
   @Post('finalize-purchase')
-   async finalizePurchase(
-     @Body() body: { listingId: string; signedTx: string; unitsRequested: number },
-   ) {
+  async finalizePurchase(
+    @Body()
+    body: {
+      listingId: string;
+      signedTx: string;
+      unitsRequested: number;
+    },
+  ) {
     this.logger.log('POST /listings/finalize-purchase', { body });
     try {
-      const result = await this.listingService.finalizePurchase(body.listingId,
-               body.signedTx,
-               body.unitsRequested,);
+      const result = await this.listingService.finalizePurchase(
+        body.listingId,
+        body.signedTx,
+        body.unitsRequested,
+      );
       this.logger.log('finalizePurchase response', { result });
       return result;
     } catch (error: any) {
-      this.logger.error('finalizePurchase failed', { error: error.message, stack: error.stack, body });
+      this.logger.error('finalizePurchase failed', {
+        error: error.message,
+        stack: error.stack,
+        body,
+      });
       if (error.message.includes('Blockhash not found')) {
-        throw new BadRequestException('Transaction blockhash is stale. Please try again.');
+        throw new BadRequestException(
+          'Transaction blockhash is stale. Please try again.',
+        );
       }
       if (error.message.includes('AccountNotInitialized')) {
-        throw new BadRequestException('Buyer USDC token account not initialized.');
+        throw new BadRequestException(
+          'Buyer USDC token account not initialized.',
+        );
       }
-      throw new InternalServerErrorException(`Failed to finalize purchase: ${error.message}`);
+      throw new InternalServerErrorException(
+        `Failed to finalize purchase: ${error.message}`,
+      );
     }
   }
 }

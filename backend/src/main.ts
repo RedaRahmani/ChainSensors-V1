@@ -5,15 +5,16 @@ import { SolanaService } from './solana/solana.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true,
-    forbidNonWhitelisted: true,
-    transform: true }));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
   app.enableCors({
-    origin: [/^http:\/\/localhost:\d+$/], 
+    origin: [/^http:\/\/localhost:\d+$/],
   });
-  
-
-
 
   const solanaService = app.get(SolanaService);
   try {

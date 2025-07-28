@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { PublicKey } from '@solana/web3.js';
@@ -15,27 +20,29 @@ export class ListingService {
   private readonly logger = new Logger(ListingService.name);
 
   constructor(
-    @InjectModel(Listing.name) private readonly listingModel: Model<ListingDocument>,
-    @InjectModel(Device.name) private readonly deviceModel: Model<DeviceDocument>,
+    @InjectModel(Listing.name)
+    private readonly listingModel: Model<ListingDocument>,
+    @InjectModel(Device.name)
+    private readonly deviceModel: Model<DeviceDocument>,
     private readonly solanaService: SolanaService,
     private readonly walrusService: WalrusService,
   ) {}
-
 
   async prepareCreateListing(
     dto: CreateListingDto,
     sellerPubkey: PublicKey,
   ): Promise<{ listingId: string; unsignedTx: string }> {
     const listingId = uuidv4().replace(/-/g, '').slice(0, 32);
-    const { unsignedTx } = await this.solanaService.buildCreateListingTransaction({
-      listingId,
-      dataCid: dto.dataCid,
-      pricePerUnit: dto.pricePerUnit,
-      deviceId: dto.deviceId,
-      totalDataUnits: dto.totalDataUnits,
-      expiresAt: dto.expiresAt ?? null,
-      sellerPubkey,
-    });
+    const { unsignedTx } =
+      await this.solanaService.buildCreateListingTransaction({
+        listingId,
+        dataCid: dto.dataCid,
+        pricePerUnit: dto.pricePerUnit,
+        deviceId: dto.deviceId,
+        totalDataUnits: dto.totalDataUnits,
+        expiresAt: dto.expiresAt ?? null,
+        sellerPubkey,
+      });
 
     await this.listingModel.create({
       listingId,
@@ -46,14 +53,13 @@ export class ListingService {
       totalDataUnits: dto.totalDataUnits,
       expiresAt: dto.expiresAt ?? null,
       unsignedTx,
-      remainingUnits: dto.totalDataUnits,  // ← initialize here
+      remainingUnits: dto.totalDataUnits, // ← initialize here
       status: ListingStatus.Pending,
     });
 
     this.logger.log(`Prepared listing ${listingId}`);
     return { listingId, unsignedTx };
   }
-
 
   async finalizeCreateListing(
     listingId: string,
@@ -67,7 +73,8 @@ export class ListingService {
       throw new BadRequestException(`Listing ${listingId} not pending`);
     }
 
-    const txSignature = await this.solanaService.submitSignedTransactionListing(signedTx);
+    const txSignature =
+      await this.solanaService.submitSignedTransactionListing(signedTx);
     listing.txSignature = txSignature;
     listing.status = ListingStatus.Active;
     listing.unsignedTx = undefined;
@@ -77,7 +84,6 @@ export class ListingService {
     return { txSignature };
   }
 
-
   async findBySeller(sellerPubkey: PublicKey) {
     return this.listingModel
       .find({ sellerPubkey: sellerPubkey.toBase58() })
@@ -85,37 +91,51 @@ export class ListingService {
       .exec();
   }
 
-
   async findActiveListings() {
-    const listings = await this.listingModel.find({ status: ListingStatus.Active }).lean().exec();
-    const enrichedListings = await Promise.all(listings.map(async (listing) => {
-      const device = await this.deviceModel.findOne({ deviceId: listing.deviceId }).lean().exec();
-      if (device && device.metadataCid) {
-        try {
-          const metadata = await this.walrusService.getMetadata(device.metadataCid);
-          return { ...listing, deviceMetadata: metadata };
-        } catch (error: any) {
-          this.logger.error(`Failed to fetch metadata for device ${listing.deviceId}: ${error.message}`);
-          return { ...listing, deviceMetadata: null };
+    const listings = await this.listingModel
+      .find({ status: ListingStatus.Active })
+      .lean()
+      .exec();
+    const enrichedListings = await Promise.all(
+      listings.map(async (listing) => {
+        const device = await this.deviceModel
+          .findOne({ deviceId: listing.deviceId })
+          .lean()
+          .exec();
+        if (device && device.metadataCid) {
+          try {
+            const metadata = await this.walrusService.getMetadata(
+              device.metadataCid,
+            );
+            return { ...listing, deviceMetadata: metadata };
+          } catch (error: any) {
+            this.logger.error(
+              `Failed to fetch metadata for device ${listing.deviceId}: ${error.message}`,
+            );
+            return { ...listing, deviceMetadata: null };
+          }
         }
-      }
-      return { ...listing, deviceMetadata: null };
-    }));
+        return { ...listing, deviceMetadata: null };
+      }),
+    );
     return enrichedListings;
   }
 
-
-   /** Called by your controller to prepare a purchase for the frontend */
-   async preparePurchase(
+  /** Called by your controller to prepare a purchase for the frontend */
+  async preparePurchase(
     listingId: string,
     buyerPubkey: PublicKey,
     unitsRequested: number,
   ): Promise<{ listingId: string; unsignedTx: string }> {
-    this.logger.log(`preparePurchase: ${listingId}`, { buyer: buyerPubkey.toBase58(), unitsRequested });
+    this.logger.log(`preparePurchase: ${listingId}`, {
+      buyer: buyerPubkey.toBase58(),
+      unitsRequested,
+    });
 
     const listing = await this.listingModel.findOne({ listingId });
     if (!listing) throw new NotFoundException(`Listing ${listingId} not found`);
-    if (listing.status !== ListingStatus.Active) throw new BadRequestException(`Listing not active`);
+    if (listing.status !== ListingStatus.Active)
+      throw new BadRequestException(`Listing not active`);
     if (listing.sellerPubkey === buyerPubkey.toBase58())
       throw new BadRequestException(`Cannot purchase your own listing`);
     if (unitsRequested <= 0 || unitsRequested > listing.remainingUnits)
@@ -143,7 +163,8 @@ export class ListingService {
   ): Promise<{ txSignature: string }> {
     this.logger.log(`finalizePurchase: ${listingId}`);
 
-    const txSignature = await this.solanaService.submitSignedPurchaseTransaction(signedTx);
+    const txSignature =
+      await this.solanaService.submitSignedPurchaseTransaction(signedTx);
     this.logger.log(`Transaction ${txSignature} confirmed on chain`);
 
     // Sync remainingUnits from on‑chain

@@ -1,0 +1,19 @@
+{
+  "name": "ChainSensors Token",
+  "symbol": "SENSOR",
+  "description": "Utility & rewards token for ChainSensors IoT marketplace.",
+  "image": "https://chainsentors-devnet.vercel.app/images/sensors/sensor-logo.png",
+  "decimals": 6,
+  "properties": {
+    "files": [
+      {
+        "uri": "https://chainsentors-devnet.vercel.app/images/sensors/sensor-logo.png",
+        "type": "image/png"
+      }
+    ],
+    "category": "image"
+  },
+  "extensions": {
+    "website": "https://chainsensors.com"
+  }
+}

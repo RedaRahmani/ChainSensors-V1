@@ -28,13 +28,19 @@ export class WalrusService {
       const config: AxiosRequestConfig = {
         headers: { 'Api-Key': this.apiKey },
       };
-      this.logger.debug(`POST ${this.tuskyUrl}/vaults`, { name, headers: config.headers });
+      this.logger.debug(`POST ${this.tuskyUrl}/vaults`, {
+        name,
+        headers: config.headers,
+      });
       const response = await axios.post(
         `${this.tuskyUrl}/vaults`,
         { name },
         config,
       );
-      this.logger.debug(`Vault create response`, { status: response.status, data: response.data });
+      this.logger.debug(`Vault create response`, {
+        status: response.status,
+        data: response.data,
+      });
       const vaultId = response.data.id;
       this.vaultCache.set(name, vaultId);
       return vaultId;
@@ -58,16 +64,21 @@ export class WalrusService {
   }
 
   /** Low-level file upload via TUS */
-  private async uploadFileToVault(data: Buffer, vaultId: string): Promise<string> {
+  private async uploadFileToVault(
+    data: Buffer,
+    vaultId: string,
+  ): Promise<string> {
     const length = data.length;
-    this.logger.debug(`Initiating TUS upload for vault ${vaultId}, size=${length}`);
+    this.logger.debug(
+      `Initiating TUS upload for vault ${vaultId}, size=${length}`,
+    );
     let uploadUrl: string;
 
     // Create TUS upload session
     try {
       const metadata = {
-        'vaultId': vaultId,
-        'filename': 'data.json',
+        vaultId: vaultId,
+        filename: 'data.json',
       };
       const uploadMetadata = this.constructUploadMetadata(metadata);
 
@@ -86,12 +97,16 @@ export class WalrusService {
         null,
         createConfig,
       );
-      this.logger.debug(`TUS create response`, { status: createRes.status, headers: createRes.headers });
+      this.logger.debug(`TUS create response`, {
+        status: createRes.status,
+        headers: createRes.headers,
+      });
       uploadUrl = createRes.headers['location'];
       if (!uploadUrl) throw new Error('Missing Location header');
     } catch (error: any) {
       this.logger.error(`TUS create upload error: ${error.message}`);
-      if (error.response) this.logger.error('Response data:', error.response.data);
+      if (error.response)
+        this.logger.error('Response data:', error.response.data);
       throw new Error('Failed to initiate upload');
     }
 
@@ -105,15 +120,20 @@ export class WalrusService {
           'Content-Type': 'application/offset+octet-stream',
         },
         maxBodyLength: Infinity,
-        validateStatus: (status) => status === 204 || status === 201 || status === 200,
+        validateStatus: (status) =>
+          status === 204 || status === 201 || status === 200,
       };
       this.logger.debug(`PATCH ${uploadUrl}`, { headers: patchConfig.headers });
       const patchRes = await axios.patch(uploadUrl, data, patchConfig);
-      this.logger.debug(`TUS upload PATCH response`, { status: patchRes.status, data: patchRes.data });
+      this.logger.debug(`TUS upload PATCH response`, {
+        status: patchRes.status,
+        data: patchRes.data,
+      });
       this.logger.debug('TUS upload PATCH succeeded');
     } catch (error: any) {
       this.logger.error(`TUS upload PATCH error: ${error.message}`);
-      if (error.response) this.logger.error('Response data:', error.response.data);
+      if (error.response)
+        this.logger.error('Response data:', error.response.data);
       throw new Error('Failed to upload chunk');
     }
 
@@ -136,14 +156,17 @@ export class WalrusService {
       return Buffer.from(response.data);
     } catch (error: any) {
       this.logger.error(`Error fetching blob ${blobId}: ${error.message}`);
-      if (error.response) this.logger.error('Response data:', error.response.data);
+      if (error.response)
+        this.logger.error('Response data:', error.response.data);
       throw new Error('Failed to retrieve file');
     }
   }
 
   async uploadMetadata(metadata: any): Promise<string> {
     this.logger.debug(`uploadMetadata called`, metadata);
-    const vaultId = await this.getOrCreateVault(metadata.deviceId || 'metadata');
+    const vaultId = await this.getOrCreateVault(
+      metadata.deviceId || 'metadata',
+    );
     const buffer = Buffer.from(JSON.stringify(metadata));
     this.logger.debug(`Uploading metadata buffer length: ${buffer.length}`);
     return this.uploadFileToVault(buffer, vaultId);
@@ -164,7 +187,9 @@ export class WalrusService {
     try {
       return JSON.parse(buffer.toString('utf-8'));
     } catch (error: any) {
-      this.logger.error(`Error parsing JSON for blob ${blobId}: ${error.message}`);
+      this.logger.error(
+        `Error parsing JSON for blob ${blobId}: ${error.message}`,
+      );
       throw new Error('Failed to parse metadata');
     }
   }

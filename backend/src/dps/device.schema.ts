@@ -36,7 +36,11 @@ export class Device {
   @Prop({ required: false })
   latestDataCid: string;
 
-  @Prop({ required: true, enum: ['pending','tx-generated','complete'], default: 'pending' })
+  @Prop({
+    required: true,
+    enum: ['pending', 'tx-generated', 'complete'],
+    default: 'pending',
+  })
   status: 'pending' | 'tx-generated' | 'complete';
 }
 

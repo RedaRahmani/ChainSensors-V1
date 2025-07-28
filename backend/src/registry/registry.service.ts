@@ -12,13 +12,14 @@ export class RegistryService {
     private readonly walrusService: WalrusService,
     private readonly configService: ConfigService,
   ) {
-    const cluster = this.configService.get<string>('SOLANA_CLUSTER') || 'devnet';
+    const cluster =
+      this.configService.get<string>('SOLANA_CLUSTER') || 'devnet';
     this.explorerBase = `https://explorer.solana.com/tx`;
   }
 
   async getAllDevices() {
     const devices = await this.dpsService.listDevices();
-    return devices.map(dev => ({
+    return devices.map((dev) => ({
       deviceId: dev.deviceId,
       metadataCid: dev.metadataCid,
     }));

@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import dynamic from "next/dynamic";
@@ -17,6 +17,8 @@ import {
 import { ChevronDown, LogOut, Database, ShoppingCart } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { signOut, useSession } from "next-auth/react";
+import { SensorTokenBadge, SensorTokenBadgeRef } from "@/components/SensorTokenBadge";
+import { useTokenRefresh } from "@/contexts/TokenRefreshContext";
 
 const WalletMultiButton = dynamic(
   () => import("@solana/wallet-adapter-react-ui").then((mod) => mod.WalletMultiButton),
@@ -29,6 +31,14 @@ export function Navbar() {
   const { data: session } = useSession();
   const { disconnect } = useWallet();
   const [scrolled, setScrolled] = useState(false);
+  const { registerTokenBadge } = useTokenRefresh();
+  const tokenBadgeRef = useRef<SensorTokenBadgeRef>(null);
+
+  useEffect(() => {
+    if (tokenBadgeRef) {
+      registerTokenBadge(tokenBadgeRef);
+    }
+  }, [registerTokenBadge]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -104,6 +114,9 @@ export function Navbar() {
             </div>
           ) : (
             <>
+              {/* SENSOR Token Badge */}
+              <SensorTokenBadge ref={tokenBadgeRef} />
+              
               {!userType && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>

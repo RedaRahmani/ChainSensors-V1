@@ -25,7 +25,7 @@ interface GenerateTxResponse {
 
 interface FinalizeDto {
   deviceId: string;
-  signedTx: string;   
+  signedTx: string;
 }
 
 interface FinalizeResponse {
@@ -105,7 +105,7 @@ export class DpsController {
   }
 
   @Get('my-devices')
-async myDevices(@Query('sellerPubkey') seller: string) {
-  return this.dpsService.listDevices({ sellerPubkey: seller });
-}
+  async myDevices(@Query('sellerPubkey') seller: string) {
+    return this.dpsService.listDevices({ sellerPubkey: seller });
+  }
 }

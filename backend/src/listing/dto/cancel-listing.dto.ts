@@ -1,9 +1,11 @@
 import { IsString, IsNotEmpty } from 'class-validator';
 
 export class CancelListingDto {
-  @IsString() @IsNotEmpty()
+  @IsString()
+  @IsNotEmpty()
   deviceId: string;
 
-  @IsString() @IsNotEmpty()
+  @IsString()
+  @IsNotEmpty()
   listingId: string;
 }

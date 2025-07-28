@@ -12,9 +12,9 @@ export class IngestService {
   constructor(
     private readonly dpsService: DpsService,
     private readonly walrusService: WalrusService,
-    @InjectModel(Reading.name) private readonly readingModel: Model<ReadingDocument>,
+    @InjectModel(Reading.name)
+    private readonly readingModel: Model<ReadingDocument>,
   ) {}
-
 
   async uploadData(deviceId: string, data: any) {
     const device = await this.dpsService.getDevice(deviceId);

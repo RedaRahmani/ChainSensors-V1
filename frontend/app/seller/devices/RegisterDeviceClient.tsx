@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { PublicKey } from "@solana/web3.js";
 import { Navbar } from "@/components/navbar";
 import { useRegisterDevice } from "@/hooks/useRegisterDevice";
+import { useTokenRefresh } from "@/contexts/TokenRefreshContext";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -55,6 +56,7 @@ const dataFrequencies = [
 export default function RegisterDeviceClient() {
   const router = useRouter();
   const registerDevice = useRegisterDevice();
+  const { refreshTokenBalance } = useTokenRefresh();
 
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -99,6 +101,11 @@ export default function RegisterDeviceClient() {
       const res = await registerDevice(csrPem, metadata);
       setResult(res);
       setStep(5);
+      
+      // Trigger token balance refresh after successful registration
+      setTimeout(() => {
+        refreshTokenBalance();
+      }, 2000); // 2 second delay to allow blockchain to confirm
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Registration failed");

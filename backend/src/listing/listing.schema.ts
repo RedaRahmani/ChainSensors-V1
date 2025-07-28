@@ -10,7 +10,7 @@ export class Listing {
   listingId: string;
 
   @Prop({ required: true })
-  sellerPubkey: string; 
+  sellerPubkey: string;
 
   @Prop({ required: true })
   deviceId: string;
@@ -28,10 +28,10 @@ export class Listing {
   totalDataUnits: number;
 
   @Prop({ required: false })
-  unsignedTx?: string;            
+  unsignedTx?: string;
 
   @Prop({ required: false })
-  txSignature?: string;          
+  txSignature?: string;
 
   @Prop({
     type: Number,
@@ -40,12 +40,12 @@ export class Listing {
     default: ListingStatus.Pending,
   })
   status: ListingStatus;
-    // Add timestamps fields explicitly for TypeScript
-    @Prop({ type: Date })
-    createdAt?: Date;
-  
-    @Prop({ type: Date })
-    updatedAt?: Date;
+  // Add timestamps fields explicitly for TypeScript
+  @Prop({ type: Date })
+  createdAt?: Date;
+
+  @Prop({ type: Date })
+  updatedAt?: Date;
 }
 
 export const ListingSchema = SchemaFactory.createForClass(Listing);

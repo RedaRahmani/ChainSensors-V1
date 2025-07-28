@@ -8,7 +8,7 @@ import { WalrusModule } from '../walrus/walrus.module';
 @Module({
   imports: [
     MongooseModule.forFeature([{ name: Reading.name, schema: ReadingSchema }]),
-    WalrusModule,                 
+    WalrusModule,
   ],
   providers: [ReadingService],
   controllers: [ReadingController],

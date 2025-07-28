@@ -11,7 +11,6 @@ export class ReadingService {
     private readonly walrusService: WalrusService,
   ) {}
 
-
   async findByDevice(
     deviceId: string,
     skip = 0,

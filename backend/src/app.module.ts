@@ -7,13 +7,14 @@ import { SolanaModule } from './solana/solana.module';
 import { WalrusModule } from './walrus/walrus.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { BrokerModule } from './broker/broker.module';
-import { ReadingModule }  from './reading/reading.module';
+import { ReadingModule } from './reading/reading.module';
 import { ListingModule } from './listing/listing.module';
 import configuration from './configuration';
-import { RatingModule } from 'rating/rating.module';
+// import { RatingModule } from 'rating/rating.module';
+import { RewardsModule } from './rewards/rewards.module';
 
-import { UsersModule }  from './users/users.module';
-import { AuthModule }   from './auth/auth.module';
+import { UsersModule } from './users/users.module';
+import { AuthModule } from './auth/auth.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -22,23 +23,35 @@ import { AuthModule }   from './auth/auth.module';
     }),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        uri: configService.get<string>('MONGODB_URI'),
-      }),
+      useFactory: async (configService: ConfigService) => {
+        const uri = process.env.MONGODB_URI;
+        if (!uri) {
+          throw new Error('MONGODB_URI environment variable is required');
+        }
+        console.log(
+          `📦 Connecting to MongoDB: ${uri.replace(/\/\/.*@/, '//***@')}`,
+        );
+        return {
+          uri,
+          connectTimeoutMS: 5000,
+          serverSelectionTimeoutMS: 5000,
+        };
+      },
       inject: [ConfigService],
     }),
     UsersModule,
     AuthModule,
-    
+
     SolanaModule,
     WalrusModule,
+    RewardsModule,
     DpsModule,
     RegistryModule,
     IngestModule,
     BrokerModule,
     ReadingModule,
     ListingModule,
-    RatingModule,
+    // RatingModule,
   ],
 })
 export class AppModule {}
