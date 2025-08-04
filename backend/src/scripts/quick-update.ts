@@ -3,7 +3,6 @@ import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 import {
   Metaplex,
   keypairIdentity,
-  bundlrStorage,
 } from '@metaplex-foundation/js';
 import * as dotenv from 'dotenv';
 

@@ -17,8 +17,7 @@ import {
 import { ChevronDown, LogOut, Database, ShoppingCart } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { signOut, useSession } from "next-auth/react";
-import { SensorTokenBadge, SensorTokenBadgeRef } from "@/components/SensorTokenBadge";
-import { useTokenRefresh } from "@/contexts/TokenRefreshContext";
+import { SensorBalance, useSensorBalance, useSensorReward, emitReward } from "@/components/sensor";
 
 const WalletMultiButton = dynamic(
   () => import("@solana/wallet-adapter-react-ui").then((mod) => mod.WalletMultiButton),
@@ -31,14 +30,8 @@ export function Navbar() {
   const { data: session } = useSession();
   const { disconnect } = useWallet();
   const [scrolled, setScrolled] = useState(false);
-  const { registerTokenBadge } = useTokenRefresh();
-  const tokenBadgeRef = useRef<SensorTokenBadgeRef>(null);
-
-  useEffect(() => {
-    if (tokenBadgeRef) {
-      registerTokenBadge(tokenBadgeRef);
-    }
-  }, [registerTokenBadge]);
+  const { balance, isLoading } = useSensorBalance();
+  const { rewardSequence } = useSensorReward();
 
   useEffect(() => {
     const handleScroll = () => {
@@ -50,7 +43,8 @@ export function Navbar() {
 
   const handleLogout = async () => {
     await disconnect();
-    setUserType(null);
+    // Note: setUserType doesn't accept null in the current type definition
+    // This might need to be handled differently in the wallet context
     disconnectGoogle();
     await signOut({ callbackUrl: "/" });
   };
@@ -114,8 +108,15 @@ export function Navbar() {
             </div>
           ) : (
             <>
-              {/* SENSOR Token Badge */}
-              <SensorTokenBadge ref={tokenBadgeRef} />
+              {/* SENSOR Token Balance */}
+              <SensorBalance 
+                amount={balance}
+                decimals={6}
+                symbol="SENSOR"
+                loading={isLoading}
+                rewardSequence={rewardSequence}
+                size="md"
+              />
               
               {!userType && (
                 <DropdownMenu>
