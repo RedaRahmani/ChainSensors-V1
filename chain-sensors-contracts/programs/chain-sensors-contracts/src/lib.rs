@@ -8,6 +8,8 @@ use instructions::Initialize;
 use crate::instructions::*;
 use instructions::RegisterDevice;
 use instructions::PurchaseListing;
+use instructions::CancelDevice;
+use instructions::UpdateMarketplace;
 
 
 
@@ -73,15 +75,30 @@ pub mod chainsensors {
     }
     
 
-    pub fn cancel_listing(ctx: Context<CancelListing>, listing_id: [u8; 32]) -> Result<()> {
+    pub fn cancel_listing(ctx: Context<CancelListing>, listing_id: String) -> Result<()> {
         instructions::cancel_listing::handler(ctx, listing_id)
     }
 
     pub fn purchase_listing(
         ctx: Context<PurchaseListing>,
-        listing_id: [u8; 32],
+        listing_id: String,
         units_requested: u64,
     ) -> Result<()> {
         instructions::purchase_listing::handler(ctx, listing_id, units_requested)
+    }
+
+    pub fn cancel_device(
+        ctx: Context<CancelDevice>,
+        device_id: String,
+    ) -> Result<()> {
+        instructions::cancel_device::handler(ctx, device_id)
+    }
+
+    pub fn update_marketplace(
+        ctx: Context<UpdateMarketplace>,
+        new_fee: Option<u16>,
+        is_active: Option<bool>,
+    ) -> Result<()> {
+        instructions::update_marketplace::handler(ctx, new_fee, is_active)
     }
 }

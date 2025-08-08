@@ -5,6 +5,7 @@ pub mod cancel_listing;
 pub mod cancel_device;
 pub mod purchase_listing;
 pub mod update_marketplace;
+pub mod compute_accuracy;
 
 pub use initialize::*;
 pub use device_registry::*;
@@ -13,4 +14,4 @@ pub use cancel_listing::*;
 pub use cancel_device::*;
 pub use purchase_listing::*;
 pub use update_marketplace::*;
-
+pub use compute_accuracy::*;

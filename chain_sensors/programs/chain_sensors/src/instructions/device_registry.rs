@@ -3,8 +3,6 @@ use anchor_lang::solana_program::clock::Clock;
 use crate::state::Marketplace;
 use crate::state::device_registry::DeviceRegistry;
 
-
-
 #[derive(Accounts)]
 #[instruction(device_id: String)]
 pub struct RegisterDevice<'info> {
@@ -75,7 +73,7 @@ pub fn handler(
     device_registry.total_data_units = total_data_units;
     device_registry.data_cid = data_cid;
     device_registry.access_key_hash = access_key_hash;
-    device_registry.is_verified = true; // Default to false, update via separate instruction if needed
+    device_registry.is_verified = true; // Default to true, update via separate instruction if needed
 
     msg!("Device registered: {} under marketplace: {}", 
         device_registry.device_id, 
@@ -86,7 +84,6 @@ pub fn handler(
 }
 
 // Error codes for the instruction
-// These codes are used to indicate specific errors that can occur during the execution of the instruction
 #[error_code]
 pub enum ErrorCode {
     #[msg("Marketplace is not active")]
@@ -103,7 +100,7 @@ pub enum ErrorCode {
     DataTypeTooLong,
     #[msg("Data unit exceeds 32 characters")]
     DataUnitTooLong,
-    #[msg("Data CID exceeds 32 characters")]
+    #[msg("Data CID exceeds 64 characters")]
     DataCidTooLong,
     #[msg("Price per unit must be greater than zero")]
     InvalidPrice,
