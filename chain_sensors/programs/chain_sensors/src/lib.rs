@@ -4,7 +4,6 @@ use arcium_anchor::prelude::*;
 pub mod instructions;
 mod state;
 use instructions::*;
-use state::*;
 
 // Computation definition offsets (commented out for now)
 const COMP_DEF_OFFSET_ADD_TOGETHER: u32 = comp_def_offset("add_together");
@@ -100,11 +99,11 @@ pub mod chain_sensors {
     }
 
     // ============================================================================
-    // FUTURE: Arcium MPC Instructions - Quality Score Accuracy
+    // FUTURE: Arcium MPC Instructions - Quality Score Accuracy (TEMPORARILY DISABLED)
     // ============================================================================
     // These will be implemented once the Arcium build environment is stable
 
-
+    /*
     pub fn init_accuracy_score_comp_def(ctx: Context<InitAccuracyScoreCompDef>) -> Result<()> {
         init_comp_def(ctx.accounts, true, COMP_DEF_OFFSET_COMPUTE_ACCURACY_SCORE.into(), None, None)?;
         Ok(())
@@ -137,16 +136,21 @@ pub mod chain_sensors {
     ) -> Result<()> {
         let accuracy_result = match output {
             ComputationOutputs::Success(ComputeAccuracyScoreOutput { field_0: result }) => result,
-            _ => return Err(ErrorCode::AbortedComputation.into()),
+            _ => return Err(ChainSensorsErrorCode::AbortedComputation.into()),
         };
 
         emit!(QualityScoreEvent {
-            accuracy_score: accuracy_result.ciphertexts[0],
-            nonce: accuracy_result.nonce.to_le_bytes(),
+            accuracy_score: if accuracy_result.len() >= 32 {
+                accuracy_result[0..32].try_into().unwrap_or([0u8; 32])
+            } else {
+                [0u8; 32]
+            },
+            nonce: [0u8; 16], // Simplified for now
             computation_type: "accuracy".to_string(),
         });
         Ok(())
     }
+    */
 
 }
 
@@ -164,11 +168,11 @@ pub struct QualityScoreEvent {
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct ComputeAccuracyScoreOutput {
-    pub field_0: EncryptedOutput,
+    pub field_0: Vec<u8>, // Use Vec<u8> instead of EncryptedOutput
 }
 
 #[error_code]
-pub enum ErrorCode {
+pub enum ChainSensorsErrorCode {
     #[msg("The computation was aborted")]
     AbortedComputation,
     #[msg("Cluster not set")]

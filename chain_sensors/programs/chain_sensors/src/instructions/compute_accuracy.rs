@@ -1,7 +1,9 @@
 use anchor_lang::prelude::*;
 use arcium_anchor::prelude::*;
+use crate::{COMP_DEF_OFFSET_COMPUTE_ACCURACY_SCORE, ID};
 
-use crate::COMP_DEF_OFFSET_COMPUTE_ACCURACY_SCORE;
+// Import required constants for Arcium macros
+use arcium_client::idl::arcium::ID_CONST;
 
 #[queue_computation_accounts("compute_accuracy_score", payer)]
 #[derive(Accounts)]
@@ -11,10 +13,13 @@ pub struct ComputeAccuracyScore<'info> {
     pub payer: Signer<'info>,
     #[account(address = derive_mxe_pda!())]
     pub mxe_account: Account<'info, MXEAccount>,
+    /// CHECK: This is a raw account validated by Arcium runtime for Mempool context.
     #[account(mut, address = derive_mempool_pda!())]
     pub mempool_account: UncheckedAccount<'info>,
+    /// CHECK: This account is derived and validated internally by the Arcium SDK.
     #[account(mut, address = derive_execpool_pda!())]
     pub executing_pool: UncheckedAccount<'info>,
+    /// CHECK: This account is derived and validated internally by the Arcium SDK.
     #[account(mut, address = derive_comp_pda!(computation_offset))]
     pub computation_account: UncheckedAccount<'info>,
     #[account(address = derive_comp_def_pda!(COMP_DEF_OFFSET_COMPUTE_ACCURACY_SCORE))]
@@ -37,6 +42,8 @@ pub struct ComputeAccuracyScoreCallback<'info> {
     pub arcium_program: Program<'info, Arcium>,
     #[account(address = derive_comp_def_pda!(COMP_DEF_OFFSET_COMPUTE_ACCURACY_SCORE))]
     pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
+    /// CHECK: This is the instructions sysvar account required for callback validation.
+    /// It is read-only and verified internally by the Arcium runtime.
     #[account(address = ::anchor_lang::solana_program::sysvar::instructions::ID)]
     pub instructions_sysvar: AccountInfo<'info>,
 }
@@ -48,8 +55,16 @@ pub struct InitAccuracyScoreCompDef<'info> {
     pub payer: Signer<'info>,
     #[account(mut, address = derive_mxe_pda!())]
     pub mxe_account: Box<Account<'info, MXEAccount>>,
+    /// CHECK: This is a raw account validated by Arcium runtime for Mempool context.
     #[account(mut)]
     pub comp_def_account: UncheckedAccount<'info>,
     pub arcium_program: Program<'info, Arcium>,
     pub system_program: Program<'info, System>,
+}
+#[error_code]
+pub enum ErrorCode {
+    #[msg("Cluster account is not set")]
+    ClusterNotSet,
+    
+    // Add others as needed
 }

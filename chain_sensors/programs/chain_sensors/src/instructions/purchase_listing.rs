@@ -1,6 +1,5 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount};
-use anchor_spl::associated_token::AssociatedToken;
 use crate::state::{ListingState, Marketplace, DeviceRegistry, PurchaseRecord};
 
 #[derive(Accounts)]
