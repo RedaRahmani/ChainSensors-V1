@@ -1,6 +1,9 @@
 use anchor_lang::prelude::*;
 use arcium_anchor::prelude::*;
-
+use arcium_macros::{
+    arcium_callback, arcium_program, callback_accounts, init_computation_definition_accounts,
+    queue_computation_accounts,
+};
 pub mod instructions;
 mod state;
 use instructions::*;
@@ -11,7 +14,7 @@ const COMP_DEF_OFFSET_COMPUTE_ACCURACY_SCORE: u32 = comp_def_offset("compute_acc
 
 declare_id!("HUcGkoShKcRFNWcYWGN7AFVVydxAQvRy8KRYeHfhdcNY");
 
-#[program]
+#[arcium_program]
 pub mod chain_sensors {
     use super::*;
 
@@ -103,7 +106,7 @@ pub mod chain_sensors {
     // ============================================================================
     // These will be implemented once the Arcium build environment is stable
 
-    /*
+
     pub fn init_accuracy_score_comp_def(ctx: Context<InitAccuracyScoreCompDef>) -> Result<()> {
         init_comp_def(ctx.accounts, true, COMP_DEF_OFFSET_COMPUTE_ACCURACY_SCORE.into(), None, None)?;
         Ok(())
@@ -150,7 +153,7 @@ pub mod chain_sensors {
         });
         Ok(())
     }
-    */
+
 
 }
 
