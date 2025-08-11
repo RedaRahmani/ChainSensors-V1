@@ -63,95 +63,158 @@ export class SolanaService {
   }
 
   async initializeMarketplace(): Promise<void> {
-    const name = this.configService.get<string>('MARKETPLACE_NAME');
-    const feeBpsStr = this.configService.get<string>('SELLER_FEE_BASIS');
-    const usdcMintStr = this.configService.get<string>('USDC_MINT');
-    if (!name || !feeBpsStr || !usdcMintStr) {
-      throw new Error(
-        'Marketplace config (NAME, SELLER_FEE_BASIS, USDC_MINT) missing',
-      );
-    }
-    const sellerFee = Number(feeBpsStr);
-    const usdcMint = new PublicKey(usdcMintStr);
-
-    const adminPubkey = this.provider.wallet.publicKey;
-    const programId = this.program.programId;
-
-    const [marketplacePda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('marketplace'), adminPubkey.toBuffer()],
-      programId,
+  const name = this.configService.get<string>('MARKETPLACE_NAME');
+  const feeBpsStr = this.configService.get<string>('SELLER_FEE_BASIS');
+  const usdcMintStr = this.configService.get<string>('USDC_MINT');
+  if (!name || !feeBpsStr || !usdcMintStr) {
+    this.logger.error(
+      `Config missing -> NAME:${!!name}, FEE:${!!feeBpsStr}, USDC_MINT:${!!usdcMintStr}`,
     );
-    const [treasuryPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('treasury'), adminPubkey.toBuffer()],
-      programId,
-    );
+    throw new Error('Marketplace config (NAME, SELLER_FEE_BASIS, USDC_MINT) missing');
+  }
+  const sellerFee = Number(feeBpsStr);
+  const usdcMint = new PublicKey(usdcMintStr);
 
-    try {
-      await (this.program.account as any)['marketplace'].fetch(marketplacePda);
-      this.logger.log(
-        'Marketplace already initialized at ' + marketplacePda.toBase58(),
-      );
-      return;
-    } catch {
-      this.logger.log('Marketplace not found, proceeding with initialization');
-    }
-
-    this.logger.log('Initializing marketplace on-chain');
-    // Solana RPC fallback logic
-    const rpcList = [
-      this.configService.get<string>('SOLANA_RPC'),
-      'https://api.devnet.solana.com',
-      'https://api.helius.xyz/v0/solana',
-      'https://api.mainnet-beta.solana.com',
-    ].filter(Boolean);
-    let initialized = false;
-    let lastError = null;
-    for (const rpc of rpcList) {
-      try {
-        // Re-instantiate provider/program with new RPC
-        const keypairJson = process.env.SOLANA_KEYPAIR_JSON;
-        const keypair = anchor.web3.Keypair.fromSecretKey(
-          Uint8Array.from(JSON.parse(keypairJson)),
-        );
-        const wallet = new anchor.Wallet(keypair);
-        const connection = new anchor.web3.Connection(rpc, 'confirmed');
-        this.provider = new anchor.AnchorProvider(connection, wallet, {
-          commitment: 'confirmed',
-        });
-        anchor.setProvider(this.provider);
-        this.program = new anchor.Program(idl as Idl, this.provider);
-
-        const tx = await this.program.methods
-          .initialize(name, sellerFee)
-          .accounts({
-            admin: adminPubkey,
-            marketplace: marketplacePda,
-            treasury: treasuryPda,
-            usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID,
-            systemProgram: SystemProgram.programId,
-            rent: SYSVAR_RENT_PUBKEY,
-          })
-          .rpc();
-        this.logger.log(
-          `Marketplace initialized (tx: ${tx}) at PDA ${marketplacePda.toBase58()} using RPC ${rpc}`,
-        );
-        initialized = true;
-        break;
-      } catch (error) {
-        this.logger.warn(
-          `Marketplace initialization failed on RPC ${rpc}: ${error.message}`,
-        );
-        lastError = error;
+  // Snapshot current admin + program
+  const adminPubkey = this.provider.wallet.publicKey;
+  const programId = this.program.programId;
+  this.logger.log(`[init] Starting initializeMarketplace()`);
+  this.logger.log(`[init] Using existing provider wallet (admin): ${adminPubkey.toBase58()}`);
+  this.logger.log(`[init] Current programId from this.program: ${programId.toBase58()}`);
+  this.logger.log(`[init] USDC mint: ${usdcMint.toBase58()}`);
+  // If your IDL has an address, log it for mismatch debugging
+  try {
+    const idlAddr = (idl as any)?.address ?? (idl as any)?.metadata?.address;
+    if (idlAddr) {
+      this.logger.log(`[init] IDL address: ${idlAddr}`);
+      if (idlAddr !== programId.toBase58()) {
+        this.logger.warn(`[init] WARNING: IDL address != this.program.programId`);
       }
     }
-    if (!initialized) {
-      this.logger.warn(
-        `Marketplace initialization failed on all RPCs - continuing without marketplace: ${lastError?.message}`,
+  } catch {}
+
+  const [marketplacePda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('marketplace'), adminPubkey.toBuffer()],
+    programId,
+  );
+  const [treasuryPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('treasury'), adminPubkey.toBuffer()],
+    programId,
+  );
+  this.logger.log(`[init] Derived PDAs (with current admin & programId):`);
+  this.logger.log(`       marketplacePda: ${marketplacePda.toBase58()}`);
+  this.logger.log(`       treasuryPda:    ${treasuryPda.toBase58()}`);
+
+  try {
+    this.logger.log(`[init] Fetching existing marketplace account…`);
+    await (this.program.account as any)['marketplace'].fetch(marketplacePda);
+    this.logger.log('Marketplace already initialized at ' + marketplacePda.toBase58());
+    return;
+  } catch (e: any) {
+    this.logger.log(`Marketplace not found, proceeding with initialization. fetch error: ${e?.message}`);
+  }
+
+  this.logger.log('Initializing marketplace on-chain');
+  // Solana RPC fallback logic
+  const rpcList = [
+    this.configService.get<string>('SOLANA_RPC'),
+    'https://api.devnet.solana.com',
+    'https://api.helius.xyz/v0/solana',
+    'https://api.mainnet-beta.solana.com',
+  ].filter(Boolean);
+
+  this.logger.log(`[init] RPCs to try (in order): ${rpcList.join(', ')}`);
+
+  let initialized = false;
+  let lastError = null;
+
+  for (const rpc of rpcList) {
+    this.logger.log(`\n[init] ===== Attempting on RPC: ${rpc} =====`);
+    try {
+      // Re-instantiate provider/program with new RPC
+      const keypairJson = process.env.SOLANA_KEYPAIR_JSON;
+      if (!keypairJson) {
+        this.logger.error('[init] SOLANA_KEYPAIR_JSON is missing or empty.');
+      }
+      const secretBytes = keypairJson ? Uint8Array.from(JSON.parse(keypairJson)) : undefined;
+      this.logger.log(`[init] Keypair bytes present: ${!!secretBytes}`);
+
+      const keypair = anchor.web3.Keypair.fromSecretKey(secretBytes as Uint8Array);
+      const wallet = new anchor.Wallet(keypair);
+      const connection = new anchor.web3.Connection(rpc, 'confirmed');
+      this.provider = new anchor.AnchorProvider(connection, wallet, { commitment: 'confirmed' });
+      anchor.setProvider(this.provider);
+
+      // NOTE: we keep your Program construction exactly as-is
+      this.program = new anchor.Program(idl as Idl, this.provider);
+
+      // Log identities now in-use
+      const signerNow = this.provider.wallet.publicKey;
+      const programIdNow = this.program.programId;
+      this.logger.log(`[init] Provider wallet (signer) now: ${signerNow.toBase58()}`);
+      this.logger.log(`[init] ProgramId now (from Program): ${programIdNow.toBase58()}`);
+
+      // Detect seed/signing mismatches (just a log, no behavior change)
+      if (signerNow.toBase58() !== adminPubkey.toBase58()) {
+        this.logger.warn(
+          `[init] WARNING: PDA seeds used admin=${adminPubkey.toBase58()} but tx will be signed by ${signerNow.toBase58()}`,
+        );
+      }
+      if (programIdNow.toBase58() !== programId.toBase58()) {
+        this.logger.warn(
+          `[init] WARNING: PDA seeds used programId=${programId.toBase58()} but Program now uses ${programIdNow.toBase58()}`,
+        );
+      }
+
+      this.logger.log(`[init] Sending initialize()…`);
+      this.logger.log(
+        `[init] Accounts -> admin:${adminPubkey.toBase58()}, marketplace:${marketplacePda.toBase58()}, treasury:${treasuryPda.toBase58()}, usdcMint:${usdcMint.toBase58()}`,
       );
-      // Continue without crashing the app
+
+      const tx = await this.program.methods
+        .initialize(name, sellerFee)
+        .accounts({
+          admin: adminPubkey,
+          marketplace: marketplacePda,
+          treasury: treasuryPda,
+          usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: SYSVAR_RENT_PUBKEY,
+        })
+        .rpc();
+
+      this.logger.log(
+        `Marketplace initialized (tx: ${tx}) at PDA ${marketplacePda.toBase58()} using RPC ${rpc}`,
+      );
+
+      // Post-check: try fetching the account immediately
+      try {
+        const acct = await (this.program.account as any)['marketplace'].fetch(marketplacePda);
+        this.logger.log(
+          `[init] Post-check fetch OK. Marketplace owner: ${acct?.admin?.toBase58?.() ?? 'n/a'}; name: ${acct?.name ?? 'n/a'}`,
+        );
+      } catch (postErr: any) {
+        this.logger.warn(`[init] Post-check fetch failed: ${postErr?.message}`);
+      }
+
+      initialized = true;
+      break;
+    } catch (error: any) {
+      this.logger.warn(`[init] Marketplace initialization failed on RPC ${rpc}: ${error?.message}`);
+      if (error?.logs) this.logger.warn(`[init] On-chain logs:\n${(error.logs || []).join('\n')}`);
+      if (error?.stack) this.logger.debug(error.stack);
+      lastError = error;
     }
   }
+
+  if (!initialized) {
+    this.logger.warn(
+      `Marketplace initialization failed on all RPCs - continuing without marketplace: ${lastError?.message}`,
+    );
+    // Continue without crashing the app
+  }
+}
 
   private async buildUnsignedTx(
     txPromise: Promise<Transaction>,
