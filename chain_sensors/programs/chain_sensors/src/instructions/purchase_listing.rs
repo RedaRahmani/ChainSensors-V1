@@ -3,7 +3,7 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount};
 use crate::state::{ListingState, Marketplace, DeviceRegistry, PurchaseRecord};
 
 #[derive(Accounts)]
-#[instruction(listing_id: String, units_requested: u64)]
+#[instruction(listing_id: String, units_requested: u64,  buyer_x25519_pubkey: [u8; 32])]
 pub struct PurchaseListing<'info> {
     #[account(mut)]
     pub buyer: Signer<'info>,
@@ -88,6 +88,8 @@ pub fn handler(
     ctx: Context<PurchaseListing>,
     listing_id: String,
     units_requested: u64,
+    // UPDATED: capture buyer's X25519 ephemeral pubkey (sealed-box recipient)
+    buyer_x25519_pubkey: [u8; 32],
 ) -> Result<()> {
     let listing = &mut ctx.accounts.listing_state;
     let clock = Clock::get()?;
@@ -123,10 +125,9 @@ pub fn handler(
     let fee: u64 = fee_calc.try_into().map_err(|_| ErrorCode::MathOverflow)?;
     let amount_to_seller = price_for_units.checked_sub(fee).ok_or(ErrorCode::MathOverflow)?;
 
-    // Additional safety check
     require!(fee.checked_add(amount_to_seller) == Some(price_for_units), ErrorCode::MathOverflow);
 
-    // Update listing state BEFORE transfers (prevent reentrancy)
+    // Update listing BEFORE transfers
     listing.remaining_units = listing
         .remaining_units
         .checked_sub(units_requested)
@@ -150,8 +151,10 @@ pub fn handler(
     record.price_paid      = price_for_units;
     record.fee             = fee;
     record.timestamp       = clock.unix_timestamp;
+    // persist buyer's sealed-box public key
+    record.buyer_x25519_pubkey = buyer_x25519_pubkey;
 
-    // 1) Transfer fee → treasury first
+    // 1) Transfer fee → treasury
     token::transfer(
         CpiContext::new(
             ctx.accounts.token_program.to_account_info(),

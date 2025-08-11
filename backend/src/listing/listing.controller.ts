@@ -56,14 +56,19 @@ export class ListingController {
       listingId: string;
       buyerPubkey: string;
       unitsRequested: number;
+      buyerEphemeralPubkey: number[];
     },
   ) {
     this.logger.log('POST /listings/prepare-purchase', { body });
     try {
+      if (!Array.isArray(body.buyerEphemeralPubkey) || body.buyerEphemeralPubkey.length !== 32) {
+      throw new BadRequestException('buyerEphemeralPubkey must be 32 bytes');
+    }
       const result = await this.listingService.preparePurchase(
         body.listingId,
         new PublicKey(body.buyerPubkey),
         body.unitsRequested,
+        body.buyerEphemeralPubkey,
       );
       this.logger.log('preparePurchase response', { result });
       return result;

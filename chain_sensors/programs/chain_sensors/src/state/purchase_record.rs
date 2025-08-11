@@ -15,4 +15,7 @@ pub struct PurchaseRecord {
     pub fee: u64,
     // Unix timestamp of the purchase
     pub timestamp: i64,
+
+    // store buyer's ephemeral X25519 pubkey (for e2e encryption grant)
+    pub buyer_x25519_pubkey: [u8; 32],
 }

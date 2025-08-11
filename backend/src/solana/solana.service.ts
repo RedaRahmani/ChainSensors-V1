@@ -17,6 +17,7 @@ import {
 } from '@solana/spl-token';
 import idl from './idl.json';
 import { BN, Idl } from '@coral-xyz/anchor';
+type Bytes32 = number[];
 
 @Injectable()
 export class SolanaService {
@@ -375,6 +376,7 @@ export class SolanaService {
     seller: PublicKey,
     unitsRequested: number,
     deviceId: string,
+    buyerEphemeralPubkey: Bytes32,
   ): Promise<{ tx: Transaction }> {
     const programId = this.program.programId;
     const marketplaceAdmin = new PublicKey(
@@ -440,8 +442,9 @@ export class SolanaService {
     // now attach the CPI to your program
     const ix = await this.program.methods
       .purchaseListing(
-        Buffer.from(listingId.padEnd(32, '\0')),
+        listingId,
         new BN(unitsRequested),
+        buyerEphemeralPubkey as any,
       )
       .accounts({
         buyer,
@@ -486,6 +489,7 @@ export class SolanaService {
     seller: PublicKey;
     unitsRequested: number;
     deviceId: string;
+    buyerEphemeralPubkey: Bytes32;
   }): Promise<string> {
     const { tx } = await this.buildPurchaseTransaction(
       args.listingId,
@@ -493,6 +497,7 @@ export class SolanaService {
       args.seller,
       args.unitsRequested,
       args.deviceId,
+      args.buyerEphemeralPubkey,
     );
     const { blockhash } =
       await this.provider.connection.getLatestBlockhash('confirmed');

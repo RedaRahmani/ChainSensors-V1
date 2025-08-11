@@ -126,6 +126,7 @@ export class ListingService {
     listingId: string,
     buyerPubkey: PublicKey,
     unitsRequested: number,
+    buyerEphemeralPubkey: number[],
   ): Promise<{ listingId: string; unsignedTx: string }> {
     this.logger.log(`preparePurchase: ${listingId}`, {
       buyer: buyerPubkey.toBase58(),
@@ -147,6 +148,7 @@ export class ListingService {
       seller: new PublicKey(listing.sellerPubkey),
       unitsRequested,
       deviceId: listing.deviceId,
+      buyerEphemeralPubkey,
     });
 
     listing.unsignedTx = unsignedTx;
