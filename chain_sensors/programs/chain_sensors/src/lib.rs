@@ -194,7 +194,7 @@ use instructions::*;
 const COMP_DEF_OFFSET_ADD_TOGETHER: u32 = comp_def_offset("add_together");
 const COMP_DEF_OFFSET_COMPUTE_ACCURACY_SCORE: u32 = comp_def_offset("compute_accuracy_score");
 
-declare_id!("HUcGkoShKcRFNWcYWGN7AFVVydxAQvRy8KRYeHfhdcNY");
+declare_id!("6wMahpkyRSSyTaoJ97vGPG79nVBurwATXPSQBEV63hjf");
 
 #[arcium_program]
 pub mod chain_sensors {

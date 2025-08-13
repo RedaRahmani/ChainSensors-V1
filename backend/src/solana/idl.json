@@ -1,5 +1,5 @@
 {
-  "address": "HUcGkoShKcRFNWcYWGN7AFVVydxAQvRy8KRYeHfhdcNY",
+  "address": "6wMahpkyRSSyTaoJ97vGPG79nVBurwATXPSQBEV63hjf",
   "metadata": {
     "name": "chain_sensors",
     "version": "0.1.0",
@@ -780,6 +780,89 @@
           }
         },
         {
+          "name": "marketplace",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116,
+                  112,
+                  108,
+                  97,
+                  99,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "marketplace.admin",
+                "account": "Marketplace"
+              }
+            ]
+          }
+        },
+        {
+          "name": "device_registry",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  118,
+                  105,
+                  99,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "marketplace"
+              },
+              {
+                "kind": "account",
+                "path": "device_registry.device_id",
+                "account": "DeviceRegistry"
+              }
+            ]
+          }
+        },
+        {
+          "name": "listing_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  115,
+                  116,
+                  105,
+                  110,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "device_registry"
+              },
+              {
+                "kind": "arg",
+                "path": "listing_id"
+              }
+            ]
+          }
+        },
+        {
           "name": "seller_ata",
           "writable": true,
           "pda": {
@@ -871,8 +954,7 @@
           }
         },
         {
-          "name": "treasury_ata",
-          "writable": true,
+          "name": "treasury",
           "pda": {
             "seeds": [
               {
@@ -897,86 +979,93 @@
           }
         },
         {
-          "name": "listing_state",
+          "name": "treasury_ata",
           "writable": true,
           "pda": {
             "seeds": [
               {
-                "kind": "const",
-                "value": [
-                  108,
-                  105,
-                  115,
-                  116,
-                  105,
-                  110,
-                  103
-                ]
-              },
-              {
                 "kind": "account",
-                "path": "device_registry"
+                "path": "treasury"
               },
-              {
-                "kind": "arg",
-                "path": "listing_id"
-              }
-            ]
-          }
-        },
-        {
-          "name": "marketplace",
-          "pda": {
-            "seeds": [
               {
                 "kind": "const",
                 "value": [
-                  109,
-                  97,
-                  114,
-                  107,
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
                   101,
-                  116,
-                  112,
-                  108,
-                  97,
-                  99,
-                  101
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
                 ]
               },
               {
                 "kind": "account",
-                "path": "marketplace.admin",
-                "account": "Marketplace"
+                "path": "usdc_mint"
               }
-            ]
-          }
-        },
-        {
-          "name": "device_registry",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  118,
-                  105,
-                  99,
-                  101
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "marketplace"
-              },
-              {
-                "kind": "account",
-                "path": "device_registry.device_id",
-                "account": "DeviceRegistry"
-              }
-            ]
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
           }
         },
         {
@@ -1420,28 +1509,13 @@
   "errors": [
     {
       "code": 6000,
-      "name": "MarketplaceInactive",
-      "msg": "Marketplace is not active"
+      "name": "Unauthorized",
+      "msg": "Only the marketplace admin can update settings"
     },
     {
       "code": 6001,
-      "name": "Unauthorized",
-      "msg": "Only the device owner can deactivate the device"
-    },
-    {
-      "code": 6002,
-      "name": "DeviceAlreadyInactive",
-      "msg": "Device is already inactive"
-    },
-    {
-      "code": 6003,
-      "name": "DeviceIdEmpty",
-      "msg": "Device ID cannot be empty"
-    },
-    {
-      "code": 6004,
-      "name": "DeviceIdTooLong",
-      "msg": "Device ID exceeds 32 characters"
+      "name": "InvalidFee",
+      "msg": "Seller fee exceeds 100% (10,000 basis points)"
     }
   ],
   "types": [

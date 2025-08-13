@@ -3,7 +3,7 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount};
 use crate::state::{ListingState, Marketplace, DeviceRegistry, PurchaseRecord};
 
 #[derive(Accounts)]
-#[instruction(listing_id: String, units_requested: u64,  buyer_x25519_pubkey: [u8; 32])]
+#[instruction(listing_id: String, units_requested: u64, buyer_x25519_pubkey: [u8; 32])]
 pub struct PurchaseListing<'info> {
     #[account(mut)]
     pub buyer: Signer<'info>,
@@ -15,20 +15,22 @@ pub struct PurchaseListing<'info> {
     )]
     pub buyer_ata: Account<'info, TokenAccount>,
 
+    // Must come before device_registry / treasury_* because they reference it
     #[account(
-        mut,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = listing_state.seller,
+        seeds = [b"marketplace", marketplace.admin.as_ref()],
+        bump = marketplace.bump,
     )]
-    pub seller_ata: Account<'info, TokenAccount>,
+    pub marketplace: Account<'info, Marketplace>,
 
+    // Must come before listing_state because listing_state seeds use device_registry.key()
     #[account(
-        mut,
-        seeds = [b"treasury", marketplace.admin.as_ref()],
-        bump = marketplace.treasury_bump,
+        seeds = [b"device", marketplace.key().as_ref(), device_registry.device_id.as_bytes()],
+        bump = device_registry.bump,
+        constraint = device_registry.is_active @ ErrorCode::DeviceInactive,
     )]
-    pub treasury_ata: Account<'info, TokenAccount>,
+    pub device_registry: Account<'info, DeviceRegistry>,
 
+    // Must come before seller_ata because seller_ata authority = listing_state.seller
     #[account(
         mut,
         seeds = [b"listing", device_registry.key().as_ref(), listing_id.as_bytes()],
@@ -38,23 +40,35 @@ pub struct PurchaseListing<'info> {
     )]
     pub listing_state: Account<'info, ListingState>,
 
+    // Now it’s safe to reference listing_state.seller
     #[account(
-        seeds = [b"marketplace", marketplace.admin.as_ref()],
-        bump = marketplace.bump,
+        mut,
+        associated_token::mint = usdc_mint,
+        associated_token::authority = listing_state.seller,
     )]
-    pub marketplace: Account<'info, Marketplace>,
+    pub seller_ata: Account<'info, TokenAccount>,
 
+    // PDA authority for treasury (place before treasury_ata)
     #[account(
-        seeds = [b"device", marketplace.key().as_ref(), device_registry.device_id.as_bytes()],
-        bump = device_registry.bump,
-        constraint = device_registry.is_active @ ErrorCode::DeviceInactive,
+        seeds = [b"treasury", marketplace.admin.as_ref()],
+        bump = marketplace.treasury_bump,
     )]
-    pub device_registry: Account<'info, DeviceRegistry>,
+    /// CHECK: PDA authority only
+    pub treasury: UncheckedAccount<'info>,
+
+    // Now it’s safe to reference treasury as the ATA authority
+    #[account(
+        mut,
+        associated_token::mint = usdc_mint,
+        associated_token::authority = treasury,
+    )]
+    pub treasury_ata: Account<'info, TokenAccount>,
 
     pub usdc_mint: Account<'info, Mint>,
     pub token_program: Program<'info, Token>,
     pub clock: Sysvar<'info, Clock>,
 
+    // Seeds use listing_state.* so this must come after listing_state
     #[account(
         init,
         payer = buyer,
@@ -72,6 +86,7 @@ pub struct PurchaseListing<'info> {
     pub rent: Sysvar<'info, Rent>,
 }
 
+
 #[event]
 pub struct ListingPurchased {
     pub listing_id: [u8; 32],
@@ -88,7 +103,6 @@ pub fn handler(
     ctx: Context<PurchaseListing>,
     listing_id: String,
     units_requested: u64,
-    // UPDATED: capture buyer's X25519 ephemeral pubkey (sealed-box recipient)
     buyer_x25519_pubkey: [u8; 32],
 ) -> Result<()> {
     let listing = &mut ctx.accounts.listing_state;
@@ -107,24 +121,22 @@ pub fn handler(
     // Inventory check
     require!(units_requested <= listing.remaining_units, ErrorCode::InsufficientUnits);
 
-    // Compute payment amounts with better overflow protection
+    // Compute payment amounts
     let price_for_units = listing.price_per_unit
         .checked_mul(units_requested)
         .ok_or(ErrorCode::MathOverflow)?;
-    
+
     // Ensure buyer has sufficient funds BEFORE computing fees
     require!(ctx.accounts.buyer_ata.amount >= price_for_units, ErrorCode::InsufficientFunds);
 
-    // Use u128 for intermediate calculations to prevent overflow
+    // Use u128 for intermediate calculations
     let fee_calc = (price_for_units as u128)
         .checked_mul(ctx.accounts.marketplace.seller_fee as u128)
         .ok_or(ErrorCode::MathOverflow)?
         .checked_div(10_000)
         .ok_or(ErrorCode::MathOverflow)?;
-    
     let fee: u64 = fee_calc.try_into().map_err(|_| ErrorCode::MathOverflow)?;
     let amount_to_seller = price_for_units.checked_sub(fee).ok_or(ErrorCode::MathOverflow)?;
-
     require!(fee.checked_add(amount_to_seller) == Some(price_for_units), ErrorCode::MathOverflow);
 
     // Update listing BEFORE transfers
@@ -151,10 +163,9 @@ pub fn handler(
     record.price_paid      = price_for_units;
     record.fee             = fee;
     record.timestamp       = clock.unix_timestamp;
-    // persist buyer's sealed-box public key
     record.buyer_x25519_pubkey = buyer_x25519_pubkey;
 
-    // 1) Transfer fee → treasury
+    // 1) Transfer fee → treasury ATA
     token::transfer(
         CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
@@ -167,7 +178,7 @@ pub fn handler(
         fee,
     )?;
 
-    // 2) Transfer remainder → seller
+    // 2) Transfer remainder → seller ATA
     token::transfer(
         CpiContext::new(
             ctx.accounts.token_program.to_account_info(),

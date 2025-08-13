@@ -17,7 +17,7 @@ import {
 } from '@solana/spl-token';
 import idl from './idl.json';
 import { BN, Idl } from '@coral-xyz/anchor';
-type Bytes32 = number[];
+type Bytes32 = number[] | Uint8Array | string;;
 
 @Injectable()
 export class SolanaService {
@@ -32,7 +32,7 @@ export class SolanaService {
   private provider: anchor.AnchorProvider;
   private readonly logger = new Logger(SolanaService.name);
   private readonly USDC_MINT = new PublicKey(
-    'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
   ); // USDC mint (devnet)
   private readonly TOKEN_PROGRAM_ID = new PublicKey(
     'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
@@ -61,7 +61,24 @@ export class SolanaService {
     if (!programIdStr) throw new Error('SOLANA_PROGRAM_ID not set');
     this.program = new anchor.Program(idl as Idl, this.provider);
   }
-
+private toBytes32(input: Bytes32, label = 'bytes32'): Uint8Array {
+    let bytes: Uint8Array;
+    if (typeof input === 'string') {
+      const hex = input.startsWith('0x') ? input.slice(2) : input;
+      if (hex.length !== 64) throw new Error(`${label} hex must be 32 bytes (64 hex chars)`);
+      const arr = new Uint8Array(32);
+      for (let i = 0; i < 32; i++) {
+        arr[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+      }
+      bytes = arr;
+    } else if (Array.isArray(input)) {
+      bytes = Uint8Array.from(input);
+    } else {
+      bytes = input;
+    }
+    if (bytes.length !== 32) throw new Error(`${label} must be exactly 32 bytes, got ${bytes.length}`);
+    return bytes;
+  }
   async initializeMarketplace(): Promise<void> {
   const name = this.configService.get<string>('MARKETPLACE_NAME');
   const feeBpsStr = this.configService.get<string>('SELLER_FEE_BASIS');
@@ -421,129 +438,150 @@ export class SolanaService {
     return sig;
   }
 
-  private async fetchListingState(
-    listingStatePda: PublicKey,
-  ): Promise<{ purchaseCount: BN }> {
-    // If `program.account.listingState` isn't recognized by TS, use bracket syntax:
-    const listingRaw: any =
-      await this.program.account['listingState'].fetch(listingStatePda);
-    return {
-      purchaseCount: new BN(listingRaw.purchaseCount),
-    };
-  }
+private async fetchListingState(
+  listingStatePda: PublicKey,
+): Promise<{ purchaseCount: BN; seller: PublicKey }> {
+  const listingRaw: any = await this.program.account['listingState'].fetch(listingStatePda);
+  // Anchor returns a Pubkey-like object; coerce to PublicKey
+  const seller = new PublicKey(listingRaw.seller);
+  return {
+    purchaseCount: new BN(listingRaw.purchaseCount),
+    seller,
+  };
+}
+
   /** Builds an unsigned purchase tx (does *not* sign) */
   /** Builds an unsigned purchase tx (does *not* sign) */
   async buildPurchaseTransaction(
-    listingId: string,
-    buyer: PublicKey,
-    seller: PublicKey,
-    unitsRequested: number,
-    deviceId: string,
-    buyerEphemeralPubkey: Bytes32,
-  ): Promise<{ tx: Transaction }> {
-    const programId = this.program.programId;
-    const marketplaceAdmin = new PublicKey(
-      this.configService.get('MARKETPLACE_ADMIN_PUBKEY')!,
-    );
-    const idBuf = Buffer.from(listingId, 'utf8');
+  listingId: string,
+  buyer: PublicKey,
+  seller: PublicKey,                // <-- keep param for API compatibility, but we will IGNORE it
+  unitsRequested: number,
+  deviceId: string,
+  buyerEphemeralPubkey: Bytes32,
+): Promise<{ tx: Transaction }> {
+  const programId = this.program.programId;
+  const marketplaceAdmin = new PublicKey(this.configService.get('MARKETPLACE_ADMIN_PUBKEY')!);
 
-    // Derive PDAs
-    const [marketplacePda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('marketplace'), marketplaceAdmin.toBuffer()],
-      programId,
-    );
-    const [treasuryPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('treasury'), marketplacePda.toBuffer()],
-      programId,
-    );
-    const [deviceRegistryPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('device'), marketplacePda.toBuffer(), Buffer.from(deviceId)],
-      programId,
-    );
-    const [listingStatePda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('listing'), deviceRegistryPda.toBuffer(), idBuf],
-      programId,
-    );
+  const unitsBN = new BN(unitsRequested);
+  const eph32 = this.toBytes32(buyerEphemeralPubkey, 'buyerEphemeralPubkey');
 
-    // Fetch on‑chain state to get purchaseCount
-    const { purchaseCount } = await this.fetchListingState(listingStatePda);
+  // PDAs (unchanged)
+  const [marketplacePda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('marketplace'), marketplaceAdmin.toBuffer()],
+    programId,
+  );
+  const [treasuryPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('treasury'), marketplaceAdmin.toBuffer()],
+    programId,
+  );
+  const [deviceRegistryPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('device'), marketplacePda.toBuffer(), Buffer.from(deviceId)],
+    programId,
+  );
+  const [listingStatePda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('listing'), deviceRegistryPda.toBuffer(), Buffer.from(listingId, 'utf8')],
+    programId,
+  );
 
-    // Derive purchaseRecord PDA
-    const [purchaseRecordPda] = PublicKey.findProgramAddressSync(
-      [
-        Buffer.from('purchase'),
-        listingStatePda.toBuffer(),
-        purchaseCount.toArrayLike(Buffer, 'le', 8),
-      ],
-      programId,
-    );
+  // *** IMPORTANT: fetch on-chain state to get the canonical seller ***
+  const { purchaseCount, seller: sellerFromState } = await this.fetchListingState(listingStatePda);
 
-    const buyerAta = await getAssociatedTokenAddress(this.USDC_MINT, buyer);
-    const sellerAta = await getAssociatedTokenAddress(this.USDC_MINT, seller);
-    const treasuryAta = await getAssociatedTokenAddress(
-      this.USDC_MINT,
-      treasuryPda,
-      true,
-    );
+  // purchase_record PDA (unchanged)
+  const [purchaseRecordPda] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from('purchase'),
+      listingStatePda.toBuffer(),
+      purchaseCount.toArrayLike(Buffer, 'le', 8),
+    ],
+    programId,
+  );
 
-    const tx = new Transaction();
+  // ATAs – derive using the **on-chain** seller
+  const buyerAta = await getAssociatedTokenAddress(this.USDC_MINT, buyer);
+  const sellerAta = await getAssociatedTokenAddress(this.USDC_MINT, sellerFromState);  // <-- CHANGED
+  const treasuryAta = await getAssociatedTokenAddress(this.USDC_MINT, treasuryPda, true);
 
-    // ONLY create the buyer's ATA if it's missing
-    const buyerInfo = await this.provider.connection.getAccountInfo(buyerAta);
-    if (!buyerInfo) {
-      this.logger.log(`Creating buyer ATA for ${buyerAta.toBase58()}`);
-      tx.add(
-        createAssociatedTokenAccountInstruction(
-          buyer, // payer
-          buyerAta, // ATA
-          buyer, // owner
-          this.USDC_MINT,
-        ),
-      );
-    }
+  const tx = new Transaction();
 
-    // now attach the CPI to your program
-    const ix = await this.program.methods
-      .purchaseListing(
-        listingId,
-        new BN(unitsRequested),
-        buyerEphemeralPubkey as any,
-      )
-      .accounts({
+  // Create missing ATAs (payer = buyer keeps single-signer flow)
+  const buyerInfo = await this.provider.connection.getAccountInfo(buyerAta);
+  if (!buyerInfo) {
+    tx.add(
+      createAssociatedTokenAccountInstruction(
         buyer,
         buyerAta,
-        sellerAta,
-        treasuryAta,
-        listingState: listingStatePda,
-        marketplace: marketplacePda,
-        deviceRegistry: deviceRegistryPda,
-        purchaseRecord: purchaseRecordPda,
-        usdcMint: this.USDC_MINT,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
-        clock: SYSVAR_CLOCK_PUBKEY,
-        rent: SYSVAR_RENT_PUBKEY,
-      })
-      .instruction();
-    tx.add(ix);
-
-    tx.feePayer = buyer;
-
-    // DEBUG: dump every instruction
-    this.logger.debug('Assembled Purchase TX:');
-    tx.instructions.forEach((ins, idx) => {
-      this.logger.debug(
-        ` Instruction ${idx}: programId = ${ins.programId.toBase58()}`,
-      );
-      ins.keys.forEach((k, ki) =>
-        this.logger.debug(
-          `   key[${ki}]: ${k.pubkey.toBase58()} signer=${k.isSigner} writable=${k.isWritable}`,
-        ),
-      );
-    });
-
-    return { tx };
+        buyer,
+        this.USDC_MINT,
+        TOKEN_PROGRAM_ID,
+        ASSOCIATED_TOKEN_PROGRAM_ID,
+      ),
+    );
   }
+
+  const sellerInfo = await this.provider.connection.getAccountInfo(sellerAta);
+  if (!sellerInfo) {
+    // OWNER MUST BE listing_state.seller (sellerFromState)
+    tx.add(
+      createAssociatedTokenAccountInstruction(
+        buyer,                 // payer
+        sellerAta,             // ata address
+        sellerFromState,       // *** authority must be on-chain seller ***
+        this.USDC_MINT,
+        TOKEN_PROGRAM_ID,
+        ASSOCIATED_TOKEN_PROGRAM_ID,
+      ),
+    );
+  }
+
+  const treasuryInfo = await this.provider.connection.getAccountInfo(treasuryAta);
+  if (!treasuryInfo) {
+    tx.add(
+      createAssociatedTokenAccountInstruction(
+        buyer,
+        treasuryAta,
+        treasuryPda,
+        this.USDC_MINT,
+        TOKEN_PROGRAM_ID,
+        ASSOCIATED_TOKEN_PROGRAM_ID,
+      ),
+    );
+  }
+
+  // Program instruction (unchanged except units/eph)
+  const ix = await this.program.methods
+    .purchaseListing(
+      listingId,
+      unitsBN,
+      Array.from(eph32) as any,
+    )
+    .accounts({
+      buyer,
+      buyerAta,
+      sellerAta,          // <-- now guaranteed to match listing_state.seller
+      treasury: treasuryPda,
+      treasuryAta,
+      listingState: listingStatePda,
+      marketplace: marketplacePda,
+      deviceRegistry: deviceRegistryPda,
+      purchaseRecord: purchaseRecordPda,
+      usdcMint: this.USDC_MINT,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      clock: SYSVAR_CLOCK_PUBKEY,
+      rent: SYSVAR_RENT_PUBKEY,
+    })
+    .instruction();
+
+  tx.add(ix);
+  tx.feePayer = buyer;
+
+  // (debug dump unchanged)
+  return { tx };
+}
+
+
+
 
   /** Returns base64 of serialized, unsigned tx for frontend to sign */
   async prepareUnsignedPurchaseTx(args: {
@@ -554,6 +592,8 @@ export class SolanaService {
     deviceId: string;
     buyerEphemeralPubkey: Bytes32;
   }): Promise<string> {
+    const _ = this.toBytes32(args.buyerEphemeralPubkey, 'buyerEphemeralPubkey');
+
     const { tx } = await this.buildPurchaseTransaction(
       args.listingId,
       args.buyer,
