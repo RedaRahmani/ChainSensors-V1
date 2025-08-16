@@ -4,6 +4,7 @@ import {
   IsNumber,
   Min,
   IsOptional,
+  MaxLength,
 } from 'class-validator';
 
 export class CreateListingDto {
@@ -13,6 +14,9 @@ export class CreateListingDto {
   @IsString()
   @IsNotEmpty()
   dataCid: string;
+
+  @IsString() @MaxLength(64)
+  dekCapsuleForMxeCid!: string;
 
   @IsNumber()
   @Min(1)

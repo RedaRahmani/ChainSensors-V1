@@ -101,12 +101,16 @@ export class DpsService {
 
     const fullMeta = { ...metadata, deviceId };
     console.log('this is the full metadataaaa', fullMeta);
-    this.logger.log(`Uploading metadata for device ${deviceId}`);
-    const metadataCid = await this.walrusService.uploadMetadata(fullMeta);
-    console.log(
-      'we get a response from walrus and this is the metadatacid :',
-      metadataCid,
-    );
+        this.logger.log(`Uploading metadata for device ${deviceId}`);
+    let metadataCid: string;
+    try {
+      metadataCid = await this.walrusService.uploadMetadata(fullMeta);
+    } catch (e: any) {
+      // Print the structured error from WalrusService so we can see status/code/body
+      this.logger.error(`Walrus upload failed: ${e?.message}`);
+      throw new BadRequestException('Failed to upload to Walrus');
+    }
+
 
     const ekHash = Uint8Array.from(metadata.ekPubkeyHash ?? Array(32).fill(0));
     const accessHash = Uint8Array.from(
@@ -147,7 +151,7 @@ export class DpsService {
     await this.deviceModel.create({
       deviceId,
       token,
-      sellerPubkey,
+      sellerPubkey: sellerPubkey.toBase58(),
       metadataCid,
       metadata,
       unsignedTx,

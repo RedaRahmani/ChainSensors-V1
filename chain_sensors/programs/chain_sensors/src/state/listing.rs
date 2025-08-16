@@ -11,7 +11,9 @@ pub struct ListingState {
     #[max_len(32)]
     pub listing_id: String,
     #[max_len(64)]
-    pub data_cid:        String,      // switched to String + max_len
+    pub data_cid: String,
+    #[max_len(64)]
+    pub dek_capsule_for_mxe_cid: String,
     pub price_per_unit:  u64,
     pub status:          u8,
     pub total_data_units: u64,

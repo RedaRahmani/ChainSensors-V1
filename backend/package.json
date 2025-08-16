@@ -22,6 +22,7 @@
     "verify-metadata": "ts-node src/scripts/verify-metadata.ts"
   },
   "dependencies": {
+    "@arcium-hq/client": "^0.2.0",
     "@coral-xyz/anchor": "^0.31.1",
     "@lightprotocol/compressed-token": "^0.22.0",
     "@lightprotocol/stateless.js": "^0.22.0",
@@ -35,8 +36,9 @@
     "@nestjs/mongoose": "^11.0.3",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^10.0.0",
+    "@project-serum/anchor": "^0.26.0",
     "@solana/spl-token": "^0.4.13",
-    "@solana/web3.js": "^1.98.2",
+    "@solana/web3.js": "^1.98.4",
     "@types/bcrypt": "^5.0.2",
     "aedes": "^0.51.3",
     "aedes-server-factory": "^0.2.1",
@@ -60,6 +62,7 @@
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.1",
     "tus-js-client": "^4.3.1",
+    "tweetnacl": "^1.0.3",
     "uuid": "^11.1.0",
     "walrus-sdk": "^1.0.1"
   },

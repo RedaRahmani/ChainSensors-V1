@@ -45,6 +45,7 @@ pub fn handler(
     ctx: Context<CreateListing>,
     listing_id: String,
     data_cid:   String,
+    dek_capsule_for_mxe_cid: String, // NEW
     price_per_unit: u64,
     device_id:  String,
     total_data_units: u64,
@@ -57,6 +58,8 @@ pub fn handler(
     require!(!listing_id.is_empty(), ErrorCode::ListingIdEmpty);
     require!(!device_id.is_empty(),  ErrorCode::DeviceIdEmpty);
     require!(!data_cid.is_empty(),   ErrorCode::DataCidEmpty);
+    require!(!dek_capsule_for_mxe_cid.is_empty(), ErrorCode::DekCapsuleCidEmpty);
+    require!(dek_capsule_for_mxe_cid.len() <= 64, ErrorCode::DekCapsuleCidTooLong);
     require!(price_per_unit > 0,     ErrorCode::InvalidPrice);
     require!(total_data_units > 0,   ErrorCode::InvalidDataUnits);
 
@@ -67,6 +70,7 @@ pub fn handler(
     l.device_id        = device_id.clone();
     l.listing_id       = listing_id.clone();
     l.data_cid         = data_cid;
+    l.dek_capsule_for_mxe_cid = dek_capsule_for_mxe_cid; // NEW
     l.price_per_unit   = price_per_unit;
     l.status           = 0;
     l.total_data_units = total_data_units;
@@ -80,11 +84,7 @@ pub fn handler(
     l.purchase_count   = 0;
     l.sold_at          = None;
 
-    msg!(
-        "Listing created: {} for device: {}",
-        listing_id,
-        device_id
-    );
+    msg!("Listing created: {} for device: {}", listing_id, device_id);
     Ok(())
 }
 
@@ -106,4 +106,8 @@ pub enum ErrorCode {
     InvalidPrice,
     #[msg("Total data units must be greater than zero")]
     InvalidDataUnits,
+    #[msg("DEK capsule CID exceeds 64 characters")]
+    DekCapsuleCidTooLong,
+    #[msg("DEK capsule CID cannot be empty")]
+    DekCapsuleCidEmpty,
 }

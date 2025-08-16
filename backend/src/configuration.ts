@@ -6,8 +6,8 @@ export default () => ({
   SOLANA_PROGRAM_ID: process.env.SOLANA_PROGRAM_ID,
   MARKETPLACE_ADMIN_PUBKEY: process.env.MARKETPLACE_ADMIN_PUBKEY,
   MONGODB_URI: process.env.MONGODB_URI,
-  TUSKY_API_KEY: process.env.TUSKY_API_KEY,
-  TUSKY_URL: process.env.TUSKY_URL,
+  //TUSKY_API_KEY: process.env.TUSKY_API_KEY,
+  //TUSKY_URL: process.env.TUSKY_URL,
   SELLER_FEE_BASIS: process.env.SELLER_FEE_BASIS,
   USDC_MINT: process.env.USDC_MINT,
   MARKETPLACE_NAME: process.env.MARKETPLACE_NAME,
@@ -19,4 +19,10 @@ export default () => ({
   TLS_KEY_PATH: process.env.BROKER_KEY_PATH,
   TLS_CERT_PATH: process.env.BROKER_CERT_PATH,
   TLS_CA_PATH: process.env.CA_CERT_PATH,
+
+  // NEW (Walrus HTTP)
+  WALRUS_PUBLISHER_URL: process.env.WALRUS_PUBLISHER_URL,
+  WALRUS_AGGREGATOR_URL: process.env.WALRUS_AGGREGATOR_URL,
+  WALRUS_EPOCHS: process.env.WALRUS_EPOCHS,
+  WALRUS_DELETABLE: process.env.WALRUS_DELETABLE,
 });

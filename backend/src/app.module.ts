@@ -10,7 +10,8 @@ import { BrokerModule } from './broker/broker.module';
 import { ReadingModule } from './reading/reading.module';
 import { ListingModule } from './listing/listing.module';
 import configuration from './configuration';
-// import { RatingModule } from 'rating/rating.module';
+import { ArciumModule } from './arcium/arcium.module';
+import { CapsulesModule } from './capsules/capsules.module';
 import { RewardsModule } from './rewards/rewards.module';
 
 import { UsersModule } from './users/users.module';
@@ -51,6 +52,8 @@ import { AuthModule } from './auth/auth.module';
     BrokerModule,
     ReadingModule,
     ListingModule,
+    ArciumModule,
+    CapsulesModule,
     // RatingModule,
   ],
 })

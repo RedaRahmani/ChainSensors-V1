@@ -14,6 +14,10 @@ export class Listing {
 
   @Prop({ required: true })
   deviceId: string;
+  
+  @Prop({ required: true })
+  dekCapsuleForMxeCid: string;
+
 
   @Prop({ required: true })
   dataCid: string;

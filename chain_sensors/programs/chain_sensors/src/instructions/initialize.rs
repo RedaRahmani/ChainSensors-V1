@@ -2,15 +2,17 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::clock::Clock;
 use anchor_spl::token::{Mint, Token, TokenAccount};
 use anchor_spl::associated_token::AssociatedToken;
+
 use crate::state::Marketplace;
 
 #[derive(Accounts)]
 #[instruction(name: String, seller_fee: u16)]
 pub struct Initialize<'info> {
-    /// The admin who pays for and signs the transaction.
+    /// Admin / marketplace owner
     #[account(mut)]
     pub admin: Signer<'info>,
-    /// The marketplace account to be initialized.
+
+    /// Marketplace PDA (seeded by admin) — matches seeds used elsewhere
     #[account(
         init,
         payer = admin,
@@ -19,40 +21,49 @@ pub struct Initialize<'info> {
         space = 8 + Marketplace::INIT_SPACE,
     )]
     pub marketplace: Account<'info, Marketplace>,
-    /// The treasury token account for collecting fees.
+
+    /// PDA authority for the treasury (no private key; authority-only)
+    #[account(
+        seeds = [b"treasury", admin.key().as_ref()],
+        bump
+    )]
+    /// CHECK: PDA authority only; stored & checked via pubkey + bump
+    pub treasury: UncheckedAccount<'info>,
+
+    /// Treasury ATA for the marketplace mint, owned by the treasury PDA
     #[account(
         init,
         payer = admin,
-        seeds = [b"treasury", admin.key().as_ref()],
-        bump,
-        token::mint = usdc_mint,
-        token::authority = admin, // Program-controlled treasury
+        associated_token::mint = usdc_mint,
+        associated_token::authority = treasury,
     )]
-    pub treasury: Account<'info, TokenAccount>,
-    /// The mint of the token used in the marketplace (e.g., USDC).
+    pub treasury_ata: Account<'info, TokenAccount>,
+
+    /// Settlement mint (e.g., USDC)
     pub usdc_mint: Account<'info, Mint>,
-    /// The SPL Token program.
+
+    /// Programs / sysvars
     pub token_program: Program<'info, Token>,
-    /// The Associated Token program.
     pub associated_token_program: Program<'info, AssociatedToken>,
-    /// The Solana System program.
     pub system_program: Program<'info, System>,
-    /// Rent sysvar for account initialization.
     pub rent: Sysvar<'info, Rent>,
 }
 
 impl<'info> Initialize<'info> {
-    pub fn init(&mut self, name: String, seller_fee: u16, bumps : &InitializeBumps) -> Result<()> {
+    pub fn init(&mut self, name: String, seller_fee: u16, bumps: &InitializeBumps) -> Result<()> {
         // Validate inputs
-        require!(name.len() <= 32, ErrorCode::NameTooLong);
-        require!(seller_fee <= 10000, ErrorCode::InvalidFee);
-        require!(name.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '_'), ErrorCode::InvalidNameChars);
         require!(!name.is_empty(), ErrorCode::NameEmpty);
+        require!(name.len() <= 32, ErrorCode::NameTooLong);
+        require!(
+            name.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '_'),
+            ErrorCode::InvalidNameChars
+        );
+        require!(seller_fee <= 10_000, ErrorCode::InvalidFee);
 
-        self.marketplace.set_inner(Marketplace{
+        self.marketplace.set_inner(Marketplace {
             admin: self.admin.key(),
-            treasury: self.treasury.key(),
-            treasury_bump: bumps.treasury,
+            treasury: self.treasury.key(),           // PDA authority
+            treasury_bump: bumps.treasury,           // store bump for later derivations
             seller_fee,
             token_mint: self.usdc_mint.key(),
             is_active: true,

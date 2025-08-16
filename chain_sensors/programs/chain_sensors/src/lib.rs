@@ -194,15 +194,11 @@ use instructions::*;
 const COMP_DEF_OFFSET_ADD_TOGETHER: u32 = comp_def_offset("add_together");
 const COMP_DEF_OFFSET_COMPUTE_ACCURACY_SCORE: u32 = comp_def_offset("compute_accuracy_score");
 
-declare_id!("6wMahpkyRSSyTaoJ97vGPG79nVBurwATXPSQBEV63hjf");
+declare_id!("D1hTFh5zn3q5ZAN9UQKePqfgk9cTYrfJsjkRYk589Duz");
 
 #[arcium_program]
 pub mod chain_sensors {
     use super::*;
-    // UPDATED: import keccak for hashing ciphertexts in the event
-    use anchor_lang::solana_program::keccak;
-
-    // … (unchanged marketplace handlers omitted for brevity) …
 
  pub fn initialize(ctx: Context<Initialize>, name: String, fee: u16) -> Result<()> {
         ctx.accounts.init(name, fee, &ctx.bumps)?;
@@ -243,6 +239,7 @@ pub mod chain_sensors {
         ctx: Context<CreateListing>,
         listing_id: String,
         data_cid: String,
+        dek_capsule_for_mxe_cid: String, // NEW
         price_per_unit: u64,
         device_id: String,
         total_data_units: u64,
@@ -252,6 +249,7 @@ pub mod chain_sensors {
             ctx,
             listing_id,
             data_cid,
+            dek_capsule_for_mxe_cid,
             price_per_unit,
             device_id,
             total_data_units,
@@ -272,9 +270,18 @@ pub mod chain_sensors {
         listing_id: String,
         units_requested: u64,
         buyer_x25519_pubkey: [u8; 32],
+        purchase_index: u64,
     ) -> Result<()> {
-        instructions::purchase_listing::handler(ctx, listing_id, units_requested, buyer_x25519_pubkey)
+        instructions::purchase_listing::handler(ctx, listing_id, units_requested, buyer_x25519_pubkey, purchase_index)
     }
+
+    pub fn finalize_purchase(
+        ctx: Context<FinalizePurchase>,
+        dek_capsule_for_buyer_cid: String,
+    ) -> Result<()> {
+        instructions::finalize_purchase::handler(ctx, dek_capsule_for_buyer_cid)
+    }
+
 
     pub fn update_marketplace(
         ctx: Context<UpdateMarketplace>,

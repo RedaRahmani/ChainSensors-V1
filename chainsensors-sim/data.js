@@ -7,7 +7,7 @@ const forge    = require('node-forge');
 const readline = require('readline');
 
 // ——— CONFIG ———
-const DEVICE_ID    = process.env.DEVICE_ID    || 'Reda-air-0022';
+const DEVICE_ID    = process.env.DEVICE_ID    || 'saad-air-2025';
 const BROKER_URL   = process.env.BROKER_URL   || 'mqtts://localhost:8881';
 const CA_CERT_PATH = process.env.CA_CERT_PATH || path.join(__dirname, 'ca-cert.pem');
 const DATA_FILE    = path.join(__dirname, 'data.json');

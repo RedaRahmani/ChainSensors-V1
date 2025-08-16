@@ -16,6 +16,10 @@ pub struct PurchaseRecord {
     // Unix timestamp of the purchase
     pub timestamp: i64,
 
-    // store buyer's ephemeral X25519 pubkey (for e2e encryption grant)
+    // Buyer's ephemeral X25519 pubkey (for e2e re-seal grant)
     pub buyer_x25519_pubkey: [u8; 32],
+    #[max_len(64)]
+    pub dek_capsule_for_mxe_cid: String,
+    #[max_len(64)]
+    pub dek_capsule_for_buyer_cid: String,
 }
