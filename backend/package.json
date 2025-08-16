@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@arcium-hq/client": "^0.2.0",
+    "@arcium-hq/reader": "^0.2.0",
     "@coral-xyz/anchor": "^0.31.1",
     "@lightprotocol/compressed-token": "^0.22.0",
     "@lightprotocol/stateless.js": "^0.22.0",

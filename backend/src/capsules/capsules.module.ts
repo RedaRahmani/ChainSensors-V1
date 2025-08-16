@@ -10,3 +10,5 @@ import { WalrusService } from '../walrus/walrus.service';
   providers: [CapsulesService, WalrusService],
 })
 export class CapsulesModule {}
+
+

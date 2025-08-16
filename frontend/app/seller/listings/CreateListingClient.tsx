@@ -333,18 +333,14 @@ export default function CreateListingClient() {
   const handleDeviceSelect = (deviceId: string) => {
     setSelectedDevice(deviceId);
     const device = devices?.find((d) => d.deviceId === deviceId);
-    if (device?.latestDataCid) {
-      setDataCid(device.latestDataCid);
-    } else {
-      setDataCid("");
-    }
+    if (device?.latestDataCid) setDataCid(device.latestDataCid);
+    else setDataCid("");
   };
 
   // Seal DEK to MXE & upload to Walrus → autofill blobId
   const handleUploadCapsule = async () => {
     try {
       setErrorMessage(null);
-      // In production, you would not prompt. This is a minimal bridge to your /capsules/upload route.
       const dekBase64 = window.prompt(
         "Paste the 32-byte DEK (base64) that was used to encrypt this dataset:"
       );
@@ -388,19 +384,19 @@ export default function CreateListingClient() {
     }
 
     const capsule = dekCapsuleForMxeCid.trim();
-    if (!capsule || capsule.length > 64) {
-      setErrorMessage("DEK Capsule blobId is required and must be ≤ 64 chars.");
+    if (!capsule || capsule.length > 128) {
+      setErrorMessage("DEK Capsule blobId is required and must be ≤ 128 chars.");
       return;
     }
 
     const expiresAtSeconds =
       expiresAt && expiresAt.length > 0
-        ? Math.floor(new Date(expiresAt).getTime() / 1000) // IDL expects seconds
+        ? Math.floor(new Date(expiresAt).getTime() / 1000)
         : null;
 
     const params: CreateListingParams = {
       deviceId: selectedDevice,
-      dataCid: dataCid || "default-cid-from-backend", // Fallback if empty
+      dataCid: dataCid || "default-cid-from-backend",
       dekCapsuleForMxeCid: capsule,
       pricePerUnit: price,
       totalDataUnits: units,
@@ -414,7 +410,7 @@ export default function CreateListingClient() {
       const txSignature = await createListing(params);
       console.log(`Listing created successfully with txSignature: ${txSignature}`);
       setIsSuccess(true);
-      setTimeout(() => router.push("/seller/dashboard"), 2000); // Redirect after success
+      setTimeout(() => router.push("/seller/dashboard"), 2000);
     } catch (error: any) {
       console.error("Error creating listing:", error);
       setErrorMessage(error.message || "Failed to create listing. Please try again.");
@@ -488,9 +484,7 @@ export default function CreateListingClient() {
           </Button>
           <div>
             <h1 className="text-3xl font-bold">Create Data Listing</h1>
-            <p className="text-muted-foreground">
-              List your IoT data for sale on the marketplace
-            </p>
+            <p className="text-muted-foreground">List your IoT data for sale on the marketplace</p>
           </div>
         </div>
 
@@ -509,10 +503,7 @@ export default function CreateListingClient() {
                   </SelectTrigger>
                   <SelectContent>
                     {devices.map((device, i) => (
-                      <SelectItem
-                        key={`${device.deviceId}-${i}`}
-                        value={device.deviceId}
-                      >
+                      <SelectItem key={`${device.deviceId}-${i}`} value={device.deviceId}>
                         {device.metadata?.deviceName || "Unnamed Device"} ({device.deviceId})
                       </SelectItem>
                     ))}
@@ -554,19 +545,18 @@ export default function CreateListingClient() {
                     <Label htmlFor="dek-capsule-cid">DEK Capsule blobId (Walrus)</Label>
                     <Input
                       id="dek-capsule-cid"
-                      placeholder="e.g. demo_capsule_1 (≤64 chars)"
+                      placeholder="e.g. walrus_blob_id (≤128 chars)"
                       value={dekCapsuleForMxeCid}
                       onChange={(e) => setDekCapsuleForMxeCid(e.target.value.trim())}
-                      maxLength={64}
+                      maxLength={128}
                     />
+
                     <div className="flex items-center gap-3 text-xs">
                       <button
                         type="button"
                         className="underline text-muted-foreground hover:text-foreground"
                         onClick={() =>
-                          setDekCapsuleForMxeCid(
-                            `demo_capsule_${Date.now().toString(36)}`
-                          )
+                          setDekCapsuleForMxeCid(`demo_capsule_${Date.now().toString(36)}`)
                         }
                       >
                         Use demo value
@@ -577,9 +567,7 @@ export default function CreateListingClient() {
                         onClick={handleUploadCapsule}
                         disabled={isUploadingCapsule}
                       >
-                        {isUploadingCapsule
-                          ? "Uploading capsule…"
-                          : "Seal DEK to MXE & upload"}
+                        {isUploadingCapsule ? "Uploading capsule…" : "Seal DEK to MXE & upload"}
                       </button>
                     </div>
                   </div>
@@ -603,9 +591,7 @@ export default function CreateListingClient() {
                 </div>
               )}
 
-              {errorMessage && (
-                <p className="text-red-500 text-sm">{errorMessage}</p>
-              )}
+              {errorMessage && <p className="text-red-500 text-sm">{errorMessage}</p>}
             </CardContent>
             <CardFooter className="flex justify-between">
               <Button variant="outline" onClick={() => router.push("/seller/dashboard")}>

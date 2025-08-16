@@ -2,6 +2,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { SolanaService } from './solana/solana.service';
+import { ArciumService } from './arcium/arcium.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);

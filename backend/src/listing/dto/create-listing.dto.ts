@@ -1,36 +1,26 @@
-import {
-  IsString,
-  IsNotEmpty,
-  IsNumber,
-  Min,
-  IsOptional,
-  MaxLength,
-} from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsOptional, MaxLength } from 'class-validator';
 
 export class CreateListingDto {
-  @IsString()
-  readonly deviceId: string;
+  @IsString() @IsNotEmpty()
+  sellerPubkey!: string;
 
-  @IsString()
-  @IsNotEmpty()
-  dataCid: string;
+  @IsString() @IsNotEmpty()
+  deviceId!: string;
 
-  @IsString() @MaxLength(64)
-  dekCapsuleForMxeCid!: string;
-
-  @IsNumber()
-  @Min(1)
-  pricePerUnit: number;
+  @IsString() @IsNotEmpty()
+  dataCid!: string;
 
   @IsNumber()
-  @Min(1)
-  totalDataUnits: number;
+  pricePerUnit!: number;
 
-  @IsString()
-  sellerPubkey: string;
+  @IsNumber()
+  totalDataUnits!: number;
 
   @IsOptional()
   @IsNumber()
-  @Min(0)
-  expiresAt?: number;
+  expiresAt?: number | null;
+
+  // Relaxed from 64 → 128 to stop the previous error
+  @IsString() @IsNotEmpty() @MaxLength(128)
+  dekCapsuleForMxeCid!: string;
 }

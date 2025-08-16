@@ -1,22 +1,21 @@
-
-
 const fs       = require('fs');
 const path     = require('path');
 const mqtt     = require('mqtt');
 const forge    = require('node-forge');
 const readline = require('readline');
+const crypto   = require('crypto');
 
 // ——— CONFIG ———
-const DEVICE_ID    = process.env.DEVICE_ID    || 'saad-air-2025';
-const BROKER_URL   = process.env.BROKER_URL   || 'mqtts://localhost:8881';
-const CA_CERT_PATH = process.env.CA_CERT_PATH || path.join(__dirname, 'ca-cert.pem');
-const DATA_FILE    = path.join(__dirname, 'data.json');
+const DEVICE_ID     = process.env.DEVICE_ID     || 'zeb-2025';
+const BROKER_URL    = process.env.BROKER_URL    || 'mqtts://localhost:8881';
+const CA_CERT_PATH  = process.env.CA_CERT_PATH  || path.join(__dirname, 'ca-cert.pem');
+const BACKEND_URL   = process.env.BACKEND_URL   || 'http://localhost:3003'; // for /capsules/upload
+const DATA_FILE     = path.join(__dirname, 'data.json');
+const DEK_FILE      = path.join(__dirname, `${DEVICE_ID}.dek`);              // raw 32 bytes
+const CAPSULE_FILE  = path.join(__dirname, `${DEVICE_ID}.mxe_capsule.blobId`);
 // —————————
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
 // load and parse the data.json once at startup
 let sensorData = [];
@@ -39,7 +38,7 @@ Device ID: ${DEVICE_ID}
 
 Select an option:
   1) Initialize device (generate key + CSR)
-  2) Start sensor (load cert + key & publish from data.json)
+  2) Start sensor (encrypt with DEK, publish envelopes, ensure capsule)
   q) Quit
 `);
   rl.question('> ', async (cmd) => {
@@ -61,6 +60,69 @@ Select an option:
   });
 }
 
+// ---------- DEK helpers ----------
+function ensureDekBytes() {
+  try {
+    const dek = fs.readFileSync(DEK_FILE);
+    if (dek.length === 32) return dek;
+    console.warn('⚠️ DEK file exists but has wrong length. Regenerating.');
+  } catch {}
+  const dek = crypto.randomBytes(32);
+  fs.writeFileSync(DEK_FILE, dek);
+  console.log(`🔐 Generated new 32-byte DEK and saved to ${path.basename(DEK_FILE)} (keep this safe).`);
+  return dek;
+}
+function b64(u8) { return Buffer.from(u8).toString('base64'); }
+
+// Encrypt one JSON record with AES-256-GCM
+function encryptRecord(dek, obj) {
+  const iv  = crypto.randomBytes(12);
+  const aad = Buffer.from(DEVICE_ID); // optional AAD binding to device
+  const plain = Buffer.from(JSON.stringify(obj), 'utf8');
+
+  const cipher = crypto.createCipheriv('aes-256-gcm', dek, iv);
+  cipher.setAAD(aad);
+  const ct  = Buffer.concat([cipher.update(plain), cipher.final()]);
+  const tag = cipher.getAuthTag();
+
+  // Envelope format (self-describing JSON)
+  return {
+    v: 1,
+    alg: 'AES-256-GCM',
+    deviceId: DEVICE_ID,
+    ts: new Date().toISOString(),
+    iv:  b64(iv),
+    tag: b64(tag),
+    aad: b64(aad),
+    ct:  b64(ct),
+  };
+}
+
+// Ensure MXE capsule exists for this DEK and store blobId locally
+async function ensureMxeCapsule(dek) {
+  try {
+    const id = fs.readFileSync(CAPSULE_FILE, 'utf8').trim();
+    if (id) return id;
+  } catch {}
+
+  const dekBase64 = b64(dek);
+  const res = await fetch(`${BACKEND_URL.replace(/\/$/, '')}/capsules/upload`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dekBase64 }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`capsule upload failed: ${res.status} ${text}`);
+  }
+  const { blobId } = await res.json();
+  fs.writeFileSync(CAPSULE_FILE, String(blobId));
+  console.log(`🧪 MXE capsule uploaded: blobId=${blobId}`);
+  console.log(`   Saved to ${path.basename(CAPSULE_FILE)} — use this in "DEK Capsule blobId (Walrus)" when creating a listing.`);
+  return blobId;
+}
+
+// ---------- Device PKI (unchanged) ----------
 async function initDevice() {
   console.log('🔑 Generating RSA keypair (2048-bit)…');
   const keys = forge.pki.rsa.generateKeyPair(2048);
@@ -83,6 +145,7 @@ async function initDevice() {
   console.log(`\nNext: paste ./${csrPath} into your Chainsensors UI (Enroll) to retrieve your device certificate.\n`);
 }
 
+// ---------- Encrypted publishing ----------
 async function startSensor() {
   const keyPath  = `${DEVICE_ID}-key.pem`;
   const certPath = `${DEVICE_ID}-cert.pem`;
@@ -100,6 +163,14 @@ async function startSensor() {
   const certPem = fs.readFileSync(certPath);
   const caPem   = fs.readFileSync(CA_CERT_PATH);
 
+  // DEK + MXE capsule
+  const dek = ensureDekBytes();
+  try { await ensureMxeCapsule(dek); }
+  catch (e) {
+    console.error('❌ Failed to create MXE capsule:', e.message);
+    console.error('   You can still publish data, but remember to create/upload the capsule before listing.');
+  }
+
   console.log(`🌐 Connecting to broker ${BROKER_URL} with mTLS…`);
   const client = mqtt.connect(BROKER_URL, {
     key: keyPem,
@@ -109,18 +180,19 @@ async function startSensor() {
   });
 
   client.on('connect', () => {
-    console.log(`✅ Connected! Publishing one record per second from data.json…`);
+    console.log(`✅ Connected! Publishing encrypted envelopes (AES-256-GCM) one per second…`);
     let idx = 0;
 
     setInterval(() => {
       const record = sensorData[idx];
+      const envelope = encryptRecord(dek, record);
       const topic  = `devices/${DEVICE_ID}/data`;
-      client.publish(topic, JSON.stringify(record), { qos: 1 }, (err) => {
-        if (err) {
-          console.error('❌ Publish failed:', err);
-        }
+
+      client.publish(topic, JSON.stringify(envelope), { qos: 1 }, (err) => {
+        if (err) console.error('❌ Publish failed:', err);
       });
-      console.log(`📤 [${idx + 1}/${sensorData.length}] Published to "${topic}":`, record);
+
+      console.log(`🔒 [${idx + 1}/${sensorData.length}] ${topic}: iv=${envelope.iv.slice(0,8)}… tag=${envelope.tag.slice(0,8)}…`);
 
       idx = (idx + 1) % sensorData.length;
     }, 1000);
