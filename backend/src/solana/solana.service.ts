@@ -1338,4 +1338,65 @@ export class SolanaService {
   async removeEventListener(id: number) {
     await this.program.removeEventListener(id);
   }
+
+  /**
+   * Returns purchases for a buyer by scanning on-chain purchaseRecord accounts
+   * and joining minimal listing info for the UI.
+   */
+  async getPurchasesByBuyer(buyer: PublicKey) {
+    // Anchor helper: fetch all purchaseRecord accounts and filter in memory.
+    // (Good enough for devnet; swap for memcmp filters later if needed.)
+    const all: Array<{ publicKey: PublicKey; account: any }> =
+      await (this.program.account as any)['purchaseRecord'].all();
+
+    const mine = all.filter((p) =>
+      new PublicKey(p.account.buyer).equals(buyer)
+    );
+
+    const out = [];
+    for (const pr of mine) {
+      const recordPk = pr.publicKey;
+      const acc = pr.account;
+
+      // Try to enrich with listing state (best effort; field names may differ slightly)
+      let listingMeta: any = null;
+      try {
+        const listingStatePk = new PublicKey(acc.listingState);
+        listingMeta = await (this.program.account as any)['listingState'].fetch(
+          listingStatePk
+        );
+      } catch {
+        // ignore – show a minimal row
+      }
+
+      out.push({
+        // record
+        recordPk: recordPk.toBase58(),
+        buyer: buyer.toBase58(),
+        units: Number(acc?.units ?? 0),
+        purchaseIndex: Number(acc?.purchaseIndex ?? 0),
+        createdAt: acc?.createdAt ? Number(acc.createdAt) : null,
+        dekCapsuleForBuyerCid: acc?.dekCapsuleForBuyerCid ?? null,
+        txSignature: acc?.txSignature ?? null,
+
+        // joined listing fields (best effort)
+        listingState: acc?.listingState
+          ? new PublicKey(acc.listingState).toBase58()
+          : null,
+        listingId: listingMeta?.listingId ?? null,
+        deviceId: listingMeta?.deviceId ?? null,
+        dataCid: listingMeta?.dataCid ?? null,
+        pricePerUnit: listingMeta?.pricePerUnit
+          ? Number(listingMeta.pricePerUnit)
+          : null,
+        expiresAt: listingMeta?.expiresAt ? Number(listingMeta.expiresAt) : null,
+        seller: listingMeta?.seller
+          ? new PublicKey(listingMeta.seller).toBase58()
+          : null,
+        deviceMetadata: listingMeta?.deviceMetadata ?? null,
+      });
+    }
+
+    return out.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  }
 }
