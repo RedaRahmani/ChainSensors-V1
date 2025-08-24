@@ -5,8 +5,9 @@ package_manager = "yarn"
 resolution = true
 skip-lint = true
 
+# MUST match the `declare_id!` in programs/chain_sensors/src/lib.rs
 [programs.localnet]
-chain_sensors = "D1hTFh5zn3q5ZAN9UQKePqfgk9cTYrfJsjkRYk589Duz"
+chain_sensors = "DWbGQjpG3aAciCfuSt16PB5FuuJhf5XATmoUpTMGRfU9"
 
 [registry]
 url = "https://api.apr.dev"
@@ -25,7 +26,4 @@ upgradeable = false
 
 [[test.genesis]]
 address = "BKck65TgoKRokMjQM3datB9oRwJ8rAj2jxPXvHXUvcL6"
-program = "/home/reda-37/yo/ChainSensors-V1/chain_sensors/artifacts/arcium_program_0.2.0.so"
-
-[test.validator]
-url = "http://127.0.0.1:8890"
+program = "/home/reda-37/zebi/ChainSensors-V1/chain_sensors/artifacts/arcium_program_0.2.0.so"

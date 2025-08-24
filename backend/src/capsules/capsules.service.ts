@@ -1,97 +1,62 @@
-// import { BadRequestException, Injectable } from '@nestjs/common';
-// import { ConfigService } from '@nestjs/config';
-// import { WalrusService } from '../walrus/walrus.service';
-// import nacl from 'tweetnacl';
-
-// @Injectable()
-// export class CapsulesService {
-//   constructor(
-//     private readonly config: ConfigService,
-//     private readonly walrus: WalrusService,
-//   ) {}
-
-//   private b64ToBytes(b64: string): Uint8Array {
-//     return Uint8Array.from(Buffer.from(b64, 'base64'));
-//   }
-
-//   // Sealed-box style "capsule" format:
-//   // [0..31]  eph_pubkey (32 bytes)
-//   // [32..55] nonce (24 bytes)
-//   // [56.. ]  ciphertext = nacl.box(message=DEK, nonce, mxePubKey, eph_secret)
-//   async createAndUploadCapsuleFromDekB64(dekBase64: string): Promise<{ blobId: string }> {
-//     if (!dekBase64) throw new BadRequestException('dekBase64 required');
-//     const dek = this.b64ToBytes(dekBase64);
-//     if (dek.length !== 32) {
-//       throw new BadRequestException('DEK must be 32 bytes (base64 of a 32-byte key)');
-//     }
-
-//     const mxePubB64 = this.config.get<string>('MXE_X25519_PUBKEY_BASE64');
-//     if (!mxePubB64) throw new Error('MXE_X25519_PUBKEY_BASE64 not set');
-//     const mxePub = this.b64ToBytes(mxePubB64);
-//     if (mxePub.length !== 32) {
-//       throw new Error('MXE_X25519_PUBKEY_BASE64 must decode to 32 bytes');
-//     }
-
-//     const eph = nacl.box.keyPair();                          // ephemeral sender key
-//     const nonce = nacl.randomBytes(nacl.box.nonceLength);    // 24 bytes
-//     const ct = nacl.box(dek, nonce, mxePub, eph.secretKey);  // encrypt DEK
-
-//     const capsule = Buffer.concat([
-//       Buffer.from(eph.publicKey),  // 32
-//       Buffer.from(nonce),          // 24
-//       Buffer.from(ct),             // 48 for 32B msg (32+16)
-//     ]);
-
-//     const blobId = await this.walrus.putCapsule(capsule);
-//     return { blobId };
-//   }
-// }
-
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { WalrusService } from '../walrus/walrus.service';
-import nacl from 'tweetnacl';
+import { ArciumService } from '../arcium/arcium.service';
 
 @Injectable()
 export class CapsulesService {
+  private readonly logger = new Logger(CapsulesService.name);
   constructor(
-    private readonly config: ConfigService,
     private readonly walrus: WalrusService,
+    private readonly arcium: ArciumService,
   ) {}
 
-  private b64ToBytes(b64: string): Uint8Array {
-    return Uint8Array.from(Buffer.from(b64, 'base64'));
+  private b64ToBytes(b64: string): Buffer {
+    try {
+      // accept both b64 and b64url (with or without padding)
+      let t = String(b64).trim();
+      t = t.replace(/-/g, '+').replace(/_/g, '/');
+      while (t.length % 4) t += '=';
+      const buf = Buffer.from(t, 'base64');
+      if (!buf.length) throw new Error('empty decode');
+      return buf;
+    } catch (e: any) {
+      throw new BadRequestException(`Invalid base64: ${e?.message || 'decode failed'}`);
+    }
   }
 
-  // Sealed-box "capsule" format:
-  // [0..31]  eph_pubkey (32 bytes)
-  // [32..55] nonce (24 bytes)
-  // [56.. ]  ciphertext = nacl.box(message=DEK, nonce, mxePubKey, eph_secret)
+  /**
+   * Create a proper Arcium capsule (serialized ciphertext) from a 32-byte DEK
+   * and upload to Walrus. Returns the Walrus blobId (use this in listings).
+   */
   async createAndUploadCapsuleFromDekB64(dekBase64: string): Promise<{ blobId: string }> {
     if (!dekBase64) throw new BadRequestException('dekBase64 required');
+
     const dek = this.b64ToBytes(dekBase64);
     if (dek.length !== 32) {
-      throw new BadRequestException('DEK must be 32 bytes (base64 of a 32-byte key)');
+      throw new BadRequestException(`DEK must be 32 bytes, got ${dek.length}`);
     }
 
-    const mxePubB64 = this.config.get<string>('MXE_X25519_PUBKEY_BASE64');
-    if (!mxePubB64) throw new Error('MXE_X25519_PUBKEY_BASE64 not set');
-    const mxePub = this.b64ToBytes(mxePubB64);
-    if (mxePub.length !== 32) {
-      throw new Error('MXE_X25519_PUBKEY_BASE64 must decode to 32 bytes');
+    this.logger.log('Sealing DEK with Arcium MXE…', { dek_len: dek.length });
+    let serialized: Buffer;
+    try {
+      serialized = await this.arcium.sealDekForMxe(dek);
+    } catch (e: any) {
+      this.logger.error('Arcium sealDekForMxe failed', { err: e?.message });
+      throw new BadRequestException(`Arcium sealing failed: ${e?.message || 'unknown error'}`);
     }
 
-    const eph = nacl.box.keyPair();
-    const nonce = nacl.randomBytes(nacl.box.nonceLength);    // 24 bytes
-    const ct = nacl.box(dek, nonce, mxePub, eph.secretKey);  // 32B msg -> 48B ct (32+16)
+    if (!serialized?.length) {
+      throw new BadRequestException('Arcium returned empty capsule bytes');
+    }
 
-    const capsule = Buffer.concat([
-      Buffer.from(eph.publicKey),  // 32
-      Buffer.from(nonce),          // 24
-      Buffer.from(ct),             // 48
-    ]);
+    this.logger.log('Uploading capsule to Walrus…', { bytes: serialized.length });
+    const blobId = await this.walrus.uploadData(serialized);
+    const normalized = this.walrus.normalizeBlobId(blobId);
 
-    const blobId = await this.walrus.uploadData(capsule);
-    return { blobId };
+    this.logger.log('createAndUploadCapsuleFromDekB64 -> OK', {
+      blobId: normalized,
+      len: normalized.length,
+    });
+    return { blobId: normalized };
   }
 }

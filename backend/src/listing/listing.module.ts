@@ -7,6 +7,8 @@ import { ListingController } from './listing.controller';
 import { DpsModule } from '../dps/dps.module';
 import { SolanaModule } from '../solana/solana.module';
 import { WalrusModule } from '../walrus/walrus.module';
+import { ArciumModule } from '../arcium/arcium.module';
+
 
 @Module({
   imports: [
@@ -17,6 +19,7 @@ import { WalrusModule } from '../walrus/walrus.module';
     DpsModule,
     SolanaModule,
     WalrusModule,
+    ArciumModule,    
   ],
   providers: [ListingService],
   controllers: [ListingController],

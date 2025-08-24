@@ -18,7 +18,6 @@ export class Listing {
   @Prop({ required: true })
   dekCapsuleForMxeCid: string;
 
-
   @Prop({ required: true })
   dataCid: string;
 
@@ -44,7 +43,7 @@ export class Listing {
     default: ListingStatus.Pending,
   })
   status: ListingStatus;
-  // Add timestamps fields explicitly for TypeScript
+
   @Prop({ type: Date })
   createdAt?: Date;
 

@@ -5,9 +5,9 @@ import { WalrusController } from './walrus.controller';
 import { WalrusDiagnosticsController } from './walrus.diagnostics.controller';
 
 @Module({
-  imports: [ConfigModule],           // ok if ConfigModule is global too
+  imports: [ConfigModule],  
   providers: [WalrusService],
-  controllers: [WalrusController, WalrusDiagnosticsController],   // <-- include the controller here
+  controllers: [WalrusController, WalrusDiagnosticsController],  
   exports: [WalrusService],
 })
 export class WalrusModule {}

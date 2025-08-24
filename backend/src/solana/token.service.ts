@@ -1,4 +1,3 @@
-// backend/src/solana/token.service.ts
 
 import { Injectable, Logger } from '@nestjs/common';
 import { Connection, Keypair, PublicKey } from '@solana/web3.js';
@@ -25,9 +24,9 @@ export class TokenService {
       this.connection = new Connection(process.env.SOLANA_RPC!, 'confirmed');
 
       // Validate and parse keypair
-      const keypairJson = process.env.SOLANA_KEYPAIR_JSON;
+      const keypairJson = process.env.MINT_AUTHORITY_KEYPAIR_JSON;
       if (!keypairJson) {
-        throw new Error('SOLANA_KEYPAIR_JSON not found in environment');
+        throw new Error('MINT_AUTHORITY_KEYPAIR_JSON not found in environment');
       }
 
       const secret = JSON.parse(keypairJson);

@@ -7,6 +7,7 @@ pub mod purchase_listing;
 pub mod update_marketplace;
 pub mod compute_accuracy;
 pub mod finalize_purchase;
+pub mod reseal_dek;
 
 pub use initialize::*;
 pub use device_registry::*;
@@ -17,3 +18,4 @@ pub use purchase_listing::*;
 pub use update_marketplace::*;
 pub use compute_accuracy::*;
 pub use finalize_purchase::*;
+pub use reseal_dek::*;

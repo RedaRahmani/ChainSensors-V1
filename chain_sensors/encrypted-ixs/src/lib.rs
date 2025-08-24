@@ -120,4 +120,12 @@ mod circuits {
 
         reading_q16_16.owner.from_arcis(accuracy_score)
     }
+
+     // --- NEW: reseal 32-byte DEK (as four u64) from MXE to buyer Shared ---
+    // Exactly matches your "pass-through" design: Enc<Mxe, [u64;4]> -> Enc<Shared, [u64;4]>
+    #[instruction]
+    pub fn reseal_dek(mxe_dek: Enc<Mxe, [u64; 4]>, buyer: Shared) -> Enc<Shared, [u64; 4]> {
+        let chunks = mxe_dek.to_arcis();
+        buyer.from_arcis(chunks)
+    }
 }
