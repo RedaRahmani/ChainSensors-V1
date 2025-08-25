@@ -381,15 +381,30 @@ export default function PurchasesClient() {
 
   // ---------- Decrypt ----------
   async function refreshBuyerCapsule(p: PurchaseRow): Promise<string | null> {
-    try {
-      const res = await fetch(`${API}/purchases/${encodeURIComponent(p.recordPk)}/capsule`);
-      if (!res.ok) return null;
+  const url = `${API}/purchases/${encodeURIComponent(p.recordPk)}/capsule`;
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const res = await fetch(url, { cache: "no-store" });
+
+    // Ready
+    if (res.ok) {
       const j = await res.json();
-      return j?.dek_capsule_for_buyer_cid ?? j?.dekCapsuleForBuyerCid ?? null;
-    } catch {
-      return null;
+      const cid = j?.dek_capsule_for_buyer_cid ?? j?.dekCapsuleForBuyerCid ?? null;
+      if (cid) return cid;
     }
+
+    // Not ready yet – keep polling on 202 (or 425 if you prefer)
+    if (res.status === 202 /* || res.status === 425 */) {
+      await new Promise(r => setTimeout(r, Math.min(1000 * (attempt + 1), 5000)));
+      continue;
+    }
+
+    // Hard error or unexpected response
+    break;
   }
+
+  return null;
+}
 
   async function decryptAndDownload(p0: PurchaseRow) {
     try {

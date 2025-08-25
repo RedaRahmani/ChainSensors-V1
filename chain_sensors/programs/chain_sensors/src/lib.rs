@@ -2,7 +2,13 @@ use anchor_lang::prelude::*;
 use arcium_anchor::prelude::*;
 use arcium_macros::{
     arcium_callback, arcium_program,
+    // we also need these macros for account contexts:
+    init_computation_definition_accounts,
+    queue_computation_accounts,
+    callback_accounts,
 };
+use arcium_client::idl::arcium::types::{CircuitSource, OffChainCircuitSource};
+
 pub mod instructions;
 mod state;
 use instructions::*;
@@ -17,7 +23,7 @@ declare_id!("DWbGQjpG3aAciCfuSt16PB5FuuJhf5XATmoUpTMGRfU9");
 pub mod chain_sensors {
     use super::*;
 
- pub fn initialize(ctx: Context<Initialize>, name: String, fee: u16) -> Result<()> {
+    pub fn initialize(ctx: Context<Initialize>, name: String, fee: u16) -> Result<()> {
         ctx.accounts.init(name, fee, &ctx.bumps)?;
         Ok(())
     }
@@ -56,7 +62,7 @@ pub mod chain_sensors {
         ctx: Context<CreateListing>,
         listing_id: String,
         data_cid: String,
-        dek_capsule_for_mxe_cid: String, // NEW
+        dek_capsule_for_mxe_cid: String,
         price_per_unit: u64,
         device_id: String,
         total_data_units: u64,
@@ -99,7 +105,6 @@ pub mod chain_sensors {
         instructions::finalize_purchase::handler(ctx, dek_capsule_for_buyer_cid)
     }
 
-
     pub fn update_marketplace(
         ctx: Context<UpdateMarketplace>,
         new_fee: Option<u16>,
@@ -112,14 +117,14 @@ pub mod chain_sensors {
         init_comp_def(
             ctx.accounts,
             true,
-            COMP_DEF_OFFSET_COMPUTE_ACCURACY_SCORE.into(),
+            0,
             None,
             None
         )?;
         Ok(())
     }
 
-      pub fn compute_accuracy_score(
+    pub fn compute_accuracy_score(
         ctx: Context<ComputeAccuracyScore>,
         computation_offset: u64,
         encrypted_reading_q16_16: [u8; 32],
@@ -128,12 +133,10 @@ pub mod chain_sensors {
         pub_key: [u8; 32],
         nonce: u128,
     ) -> Result<()> {
-        // UPDATED: persist nonce in the Job PDA so callback can emit it
-        let clock = Clock::get()?; // UPDATED
-        ctx.accounts.job_pda.nonce = nonce;                 // UPDATED
-        // UPDATED: Anchor 0.31 typed bumps
+        let clock = Clock::get()?;
+        ctx.accounts.job_pda.nonce = nonce;
         ctx.accounts.job_pda.bump = ctx.bumps.job_pda;
-        ctx.accounts.job_pda.created_at = clock.unix_timestamp;              // UPDATED
+        ctx.accounts.job_pda.created_at = clock.unix_timestamp;
 
         let args = vec![
             Argument::ArcisPubkey(pub_key),
@@ -146,81 +149,137 @@ pub mod chain_sensors {
         Ok(())
     }
 
-    // -------------------- callback (UPDATED) --------------------
     #[arcium_callback(encrypted_ix = "compute_accuracy_score")]
     pub fn compute_accuracy_score_callback(
-        ctx: Context<ComputeAccuracyScoreCallback>, // UPDATED: must be named `ctx`
+        ctx: Context<ComputeAccuracyScoreCallback>,
         output: ComputationOutputs<ComputeAccuracyScoreOutput>,
     ) -> Result<()> {
         let accuracy_ciphertext = match output {
             ComputationOutputs::Success(ComputeAccuracyScoreOutput { field_0: result }) => result,
-            _ => return Err(ChainSensorsErrorCode::AbortedComputation.into()),
+            _ => return Err(ErrorCode::AbortedComputation.into()),
         };
 
-        // Hash the ciphertext for a fixed-size on-chain signal
         let digest = anchor_lang::solana_program::keccak::hash(&accuracy_ciphertext).0;
-
-        // UPDATED: emit the real nonce (stored earlier in Job PDA)
-        let nonce_le: [u8; 16] = ctx.accounts.job_pda.nonce.to_le_bytes(); // UPDATED
+        let nonce_le: [u8; 16] = ctx.accounts.job_pda.nonce.to_le_bytes();
 
         emit!(QualityScoreEvent {
             accuracy_score: digest,
-            nonce: nonce_le, // UPDATED: real nonce
+            nonce: nonce_le,
             computation_type: "accuracy".to_string(),
         });
 
         Ok(())
     }
 
-    pub fn init_reseal_dek_comp_def(ctx: Context<InitAccuracyScoreCompDef>) -> Result<()> {
-    // same Accounts struct is fine; it just holds the comp-def PDA
-    init_comp_def(
-        ctx.accounts,
-        true,                                   // enable now
-        COMP_DEF_OFFSET_RESEAL_DEK.into(),      // reseal
-        None,
-        None
-    )?;
-    Ok(())
+
+    pub fn init_reseal_dek_comp_def(ctx: Context<InitResealDekCompDef>) -> Result<()> {
+
+        init_comp_def(
+            ctx.accounts,
+            false,
+            0,
+            Some(CircuitSource::OffChain(OffChainCircuitSource {
+                source: "https://github.com/RedaRahmani/ChainSensors-V1/releases/download/v0.1.0/reseal_dek.arcis".to_string(),
+                hash: [0; 32], // integrity not enforced yet
+            })),
+            None,
+        )?;
+        Ok(())
+    }
+
+    pub fn reseal_dek(
+        ctx: Context<ResealDek>,
+        computation_offset: u64,
+        nonce: u128,
+        buyer_x25519_pubkey: [u8; 32],
+        c0: [u8; 32],
+        c1: [u8; 32],
+        c2: [u8; 32],
+        c3: [u8; 32],
+    ) -> Result<()> {
+
+        instructions::reseal_dek::handler(
+            ctx,
+            computation_offset,
+            nonce,
+            buyer_x25519_pubkey,
+            c0, c1, c2, c3,
+        )
+    }
 }
 
-pub fn reseal_dek(
-    ctx: Context<ComputeAccuracyScore>,
-    computation_offset: u64,
-    nonce: u128,
-    buyer_x25519_pubkey: [u8; 32],
-    c0: [u8; 32],
-    c1: [u8; 32],
-    c2: [u8; 32],
-    c3: [u8; 32],
-) -> Result<()> {
-    instructions::reseal_dek::handler(ctx, computation_offset, nonce, buyer_x25519_pubkey, c0, c1, c2, c3)
-}
-
-
-}
-
-// ============================================================================
-// MPC Event Structure for Quality Scores
-// ============================================================================
 
 #[event]
 pub struct QualityScoreEvent {
-    pub accuracy_score: [u8; 32], // UPDATED: now a hash of the ciphertext
+    pub accuracy_score: [u8; 32],
     pub nonce: [u8; 16],
     pub computation_type: String,
 }
 
-// Keep as Vec<u8> to carry full ciphertext bytes from runtime
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct ComputeAccuracyScoreOutput {
     pub field_0: Vec<u8>,
 }
 
 #[error_code]
-pub enum ChainSensorsErrorCode {
+pub enum ErrorCode {
     #[msg("The computation was aborted")]
     AbortedComputation,
     #[msg("Cluster not set")]
     ClusterNotSet,
+}
+
+#[init_computation_definition_accounts("reseal_dek", payer)]
+#[derive(Accounts)]
+pub struct InitResealDekCompDef<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(mut , address = derive_mxe_pda!())]
+    pub mxe_account: Account<'info, MXEAccount>,
+
+    #[account(mut)]
+    pub comp_def_account: UncheckedAccount<'info>,
+    pub arcium_program: Program<'info, Arcium>,
+    pub system_program: Program<'info, System>,
+}
+
+#[queue_computation_accounts("reseal_dek", payer)]
+#[derive(Accounts)]
+#[instruction(computation_offset: u64)]
+pub struct ResealDek<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(address = derive_mxe_pda!())]
+    pub mxe_account: Account<'info, MXEAccount>,
+
+    #[account(mut, address = derive_mempool_pda!())]
+
+    pub mempool_account: UncheckedAccount<'info>,
+
+    #[account(mut, address = derive_execpool_pda!())]
+
+    pub executing_pool: UncheckedAccount<'info>,
+
+    #[account(mut, address = derive_comp_pda!(computation_offset))]
+
+    pub computation_account: UncheckedAccount<'info>,
+
+    #[account(address = derive_comp_def_pda!(COMP_DEF_OFFSET_RESEAL_DEK))]
+    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
+
+
+    #[account(mut, address = ARCIUM_FEE_POOL_ACCOUNT_ADDRESS)]
+    pub pool_account: Account<'info, FeePool>,
+
+    #[account(address = ARCIUM_CLOCK_ACCOUNT_ADDRESS)]
+    pub clock_account: Account<'info, ClockAccount>,
+
+
+    #[account(mut, address = derive_cluster_pda!(mxe_account))]
+    pub cluster_account: Account<'info, Cluster>,
+
+    pub system_program: Program<'info, System>,
+    pub arcium_program: Program<'info, Arcium>,
 }

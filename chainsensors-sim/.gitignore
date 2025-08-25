@@ -63,3 +63,9 @@ pitasa-2026-key.pem
 pitasa-2026.csr.pem
 pitasa-2026.dek
 pitasa-2026.metadata.json
+
+sexy-2026-cert.pem
+sexy-2026.csr.pem
+sexy-2026-key.pem
+sexy-2026.dek
+sexy-2026.metadata.json

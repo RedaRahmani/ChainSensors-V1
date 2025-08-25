@@ -7,7 +7,7 @@ const readline = require('readline');
 const crypto   = require('crypto');
 
 // ——— CONFIG ———
-const DEVICE_ID     = process.env.DEVICE_ID     || 'pitasa-2026';
+const DEVICE_ID     = process.env.DEVICE_ID     || 'sexy-2026';
 const BROKER_URL    = process.env.BROKER_URL    || 'mqtts://localhost:8881';
 const CA_CERT_PATH  = process.env.CA_CERT_PATH  || path.join(__dirname, 'ca-cert.pem');
 const BACKEND_URL   = (process.env.BACKEND_URL  || 'http://localhost:3003').replace(/\/+$/, '');

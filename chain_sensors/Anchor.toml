@@ -5,7 +5,6 @@ package_manager = "yarn"
 resolution = true
 skip-lint = true
 
-# MUST match the `declare_id!` in programs/chain_sensors/src/lib.rs
 [programs.localnet]
 chain_sensors = "DWbGQjpG3aAciCfuSt16PB5FuuJhf5XATmoUpTMGRfU9"
 

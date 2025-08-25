@@ -1260,10 +1260,6 @@
           "name": "comp_def_account"
         },
         {
-          "name": "cluster_account",
-          "writable": true
-        },
-        {
           "name": "pool_account",
           "writable": true,
           "address": "7MGSS4iKNM4sVib7bDZDJhVqB6EcchPwVnTKenCY1jt3"
@@ -1273,32 +1269,8 @@
           "address": "FHriyvoZotYiFnbUzKFjzRSb2NiaC8RPWY7jtKuKhg65"
         },
         {
-          "name": "job_pda",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  113,
-                  117,
-                  97,
-                  108,
-                  105,
-                  116,
-                  121,
-                  95,
-                  106,
-                  111,
-                  98
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "computation_account"
-              }
-            ]
-          }
+          "name": "cluster_account",
+          "writable": true
         },
         {
           "name": "system_program",
