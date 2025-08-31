@@ -18,6 +18,7 @@ import {
 } from '@solana/spl-token';
 import idl from './idl.json';
 import { BN, Idl } from '@coral-xyz/anchor';
+import { logKV } from '../common/trace';
 
 type Bytes32 = number[] | Uint8Array | string;
 
@@ -522,6 +523,14 @@ export class SolanaService {
         .rpc({ commitment: 'confirmed' });
 
       this.logger.log(`finalize_purchase ok: ${sig} (record=${params.record.toBase58()})`);
+      
+      // Add structured log for finalize_purchase success
+      this.logger.log({ 
+        msg: 'finalize_purchase.ok', 
+        listingState: params.listing.toBase58(), 
+        purchaseRecord: params.record.toBase58(), 
+        buyerCid: params.dekCapsuleForBuyerCid 
+      });
       return sig;
     } catch (e: any) {
       await this.logErrorWithOnchainLogs(e, 'finalize_purchase');
@@ -530,7 +539,7 @@ export class SolanaService {
   }
 
   // ——— read purchase_record (buyer capsule CID) ———
-  async getPurchaseRecordBuyerCid(recordPk: PublicKey): Promise<string | null> {
+  async getPurchaseRecordBuyerCid(recordPk: PublicKey, traceId?: string): Promise<string | null> {
     this.logger.log(`[getPurchaseRecordBuyerCid] Fetching purchase record: ${recordPk.toBase58()}`);
     
     try {
@@ -540,6 +549,32 @@ export class SolanaService {
       this.logger.debug(`[getPurchaseRecordBuyerCid] Account keys: ${Object.keys(acc || {}).join(', ')}`);
       
       const buyerCid = acc?.dekCapsuleForBuyerCid || null;
+      const mxeCid = acc?.dekCapsuleForMxeCid || null;
+      
+      // Analyze CID encoding safety
+      const mxeCidLooksBase64UrlSafe = mxeCid ? /^[A-Za-z0-9\-_]+$/.test(mxeCid) : false;
+      const buyerCidLooksBase64UrlSafe = buyerCid ? /^[A-Za-z0-9\-_]+$/.test(buyerCid) : false;
+      
+      // Log compact analysis
+      logKV(this.logger, 'solana.getPurchaseRecordBuyerCid', {
+        traceId,
+        recordPk: recordPk.toBase58(),
+        listing: acc?.listingState?.toBase58() || null,
+        hasBuyerX25519Pubkey: !!(acc?.buyerEphemeralPubkey && acc.buyerEphemeralPubkey.length === 32),
+        mxeCidLen: mxeCid ? mxeCid.length : 0,
+        buyerCidLen: buyerCid ? buyerCid.length : 0,
+        mxeCidLooksBase64UrlSafe,
+        buyerCidLooksBase64UrlSafe,
+      }, 'debug');
+      
+      // Check for non-URL-safe MXE CID
+      if (mxeCid && (mxeCid.includes('+') || mxeCid.includes('/') || mxeCid.includes('='))) {
+        logKV(this.logger, 'solana.mxe_cid_not_urlsafe', {
+          traceId,
+          reason: 'mxe_cid_not_urlsafe',
+          mxeCidLength: mxeCid.length,
+        }, 'warn');
+      }
       
       if (buyerCid) {
         this.logger.log(`[getPurchaseRecordBuyerCid] Found buyer CID: ${buyerCid.substring(0, 20)}...`);

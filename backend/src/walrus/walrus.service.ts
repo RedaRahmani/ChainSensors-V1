@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import * as dns from 'dns';
 import * as https from 'https';
+import { logKV } from '../common/trace';
 
 @Injectable()
 export class WalrusService {
@@ -61,8 +62,14 @@ export class WalrusService {
     return this.toBase64Url(id);
   }
 
+  /** CID utility: check if looks like base64url (only [A-Za-z0-9-_], no '=') */
+  public looksBase64Url(s: string): boolean {
+    return /^[A-Za-z0-9\-_]+$/.test(s);
+  }
+
   private buildAggUrl(pathId: string): string {
-    return `${this.aggregatorUrl.replace(/\/$/, '')}/v1/blobs/${pathId}`;
+    const normalizedId = this.toBase64Url(pathId);
+    return `${this.aggregatorUrl.replace(/\/$/, '')}/v1/blobs/${normalizedId}`;
   }
 
   private async putBlob(data: Buffer, epochs?: number): Promise<string> {
@@ -164,10 +171,19 @@ export class WalrusService {
   /**
    * Smart fetch: tries raw-encoded, base64url, and encoded base64url path forms.
    */
-  async fetchFileSmart(blobId: string): Promise<{ bytes: Buffer; used: string }> {
+  async fetchFileSmart(blobId: string, traceId?: string): Promise<{ bytes: Buffer; used: string }> {
     const attempts: { note: string; url: string }[] = [];
     const raw = String(blobId).trim();
     const b64u = this.toBase64Url(raw);
+
+    // Auto-normalize if not URL-safe
+    if (!this.looksBase64Url(raw)) {
+      logKV(this.logger, 'walrus.cid_normalized', {
+        traceId,
+        originalCid: raw.substring(0, 20) + '...',
+        normalizedCid: b64u.substring(0, 20) + '...',
+      }, 'debug');
+    }
 
     attempts.push({ note: 'encoded(raw)', url: this.buildAggUrl(encodeURIComponent(raw)) });
     attempts.push({ note: 'b64url',       url: this.buildAggUrl(b64u) });
@@ -182,7 +198,20 @@ export class WalrusService {
           responseType: 'arraybuffer',
           lookup: (hostname, _opts, cb) => dns.lookup(hostname, { family: 4, all: false }, cb),
         } as AxiosRequestConfig & { lookup: any });
-        return { bytes: Buffer.from(res.data), used: a.note };
+        
+        const bytes = Buffer.from(res.data);
+        const contentType = res.headers['content-type'] || 'application/octet-stream';
+        
+        // Add fetch summary log
+        this.logger.debug({
+          msg: 'walrus.fetch',
+          cid: raw.slice(0, 16) + '…',
+          status: res.status,
+          contentType,
+          contentLength: bytes.length,
+        });
+        
+        return { bytes, used: a.note };
       } catch (err: any) {
         const status = err?.response?.status;
         const body = err?.response?.data;
@@ -196,6 +225,23 @@ export class WalrusService {
 
     const status = lastErr?.response?.status;
     const code = lastErr?.code;
+    
+    // Log fetch failure
+    logKV(this.logger, 'walrus.fetch', {
+      traceId,
+      cid: raw.substring(0, 10) + '...',
+      status: status || null,
+      contentType: null,
+      contentLength: 0,
+    }, 'error');
+    
+    logKV(this.logger, 'walrus.fetch_failed', {
+      traceId,
+      reason: 'walrus_fetch_failed',
+      cid: raw.substring(0, 10) + '...',
+      attempts: attempts.length,
+    }, 'error');
+
     this.logger.error(
       `Walrus GET failed for ${raw} after ${attempts.length} attempts [status=${status ?? '-'} code=${code ?? '-'}]: ${lastErr?.message}`,
     );

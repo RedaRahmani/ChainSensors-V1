@@ -1,0 +1,5 @@
+packages:
+  - 'frontend'
+  - 'backend'  
+  - 'chain_sensors'
+  - 'chainsensors-sim'

@@ -51,13 +51,17 @@ export class ArciumController {
    * after finalization via your on-chain flow (callback/data-object).
    */
   @Post('capsules/reseal')
-  async reseal(@Body() body: { mxeCapsuleCid?: string; buyerX25519PubkeyB64?: string }) {
+  async reseal(@Body() body: { 
+    mxeCapsuleCid?: string; 
+    buyerX25519PubkeyB64?: string;
+    listingState?: string;
+    purchaseRecord?: string;
+  }) {
     this.logger.log('POST /arcium/capsules/reseal');
 
-    const mxeCapsuleCid = body?.mxeCapsuleCid?.trim();
-    const buyerX25519PubkeyB64 = body?.buyerX25519PubkeyB64?.trim();
-    if (!mxeCapsuleCid || !buyerX25519PubkeyB64) {
-      throw new HttpException('mxeCapsuleCid and buyerX25519PubkeyB64 required', HttpStatus.BAD_REQUEST);
+    const { mxeCapsuleCid, buyerX25519PubkeyB64, listingState, purchaseRecord } = body;
+    if (!mxeCapsuleCid || !buyerX25519PubkeyB64 || !listingState || !purchaseRecord) {
+      throw new HttpException('mxeCapsuleCid, buyerX25519PubkeyB64, listingState, and purchaseRecord required', HttpStatus.BAD_REQUEST);
     }
 
     try {
@@ -71,6 +75,8 @@ export class ArciumController {
       const { sig, computationOffset } = await this.arcium.resealDekOnChain({
         mxeCapsule: mxeCapsuleBytes,
         buyerX25519Pubkey: buyerKey,
+        listingState: new (await import('@solana/web3.js')).PublicKey(listingState),
+        purchaseRecord: new (await import('@solana/web3.js')).PublicKey(purchaseRecord),
       });
 
       // Return job metadata to the client; downstream can observe finalization/callback

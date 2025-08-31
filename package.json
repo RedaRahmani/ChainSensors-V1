@@ -1,0 +1,17 @@
+{
+  "name": "chainsensors-v1",
+  "version": "1.0.0",
+  "description": "ChainSensors V1 - Sensor data marketplace on Solana",
+  "private": true,
+  "scripts": {
+    "arcium:build:devnet": "mkdir -p build && cd chain_sensors && arcium build && cp build/*.arcis ../build/ && cd ../build && for f in *.arcis; do cp \"$f\" \"${f%%.arcis}_devnet.arcis\"; done",
+    "program:build": "pnpm arcium:build:devnet && cd chain_sensors && anchor build"
+  },
+  "devDependencies": {},
+  "workspaces": [
+    "frontend",
+    "backend",
+    "chain_sensors",
+    "chainsensors-sim"
+  ]
+}

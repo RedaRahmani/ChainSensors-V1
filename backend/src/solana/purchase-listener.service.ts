@@ -55,6 +55,8 @@ export class PurchaseListenerService implements OnModuleInit, OnModuleDestroy {
           const { sig, computationOffset } = await this.arcium.resealDekOnChain({
             mxeCapsule: bytes,
             buyerX25519Pubkey: buyerX,
+            listingState: listing,
+            purchaseRecord: record,
           });
           this.logger.log(`reseal_dek queued from listener: tx=${sig} offset=${computationOffset.toString()}`);
         } catch (e: any) {

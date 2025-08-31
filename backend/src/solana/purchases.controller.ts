@@ -1,13 +1,17 @@
 import {
   Controller, Get, Param, Query, HttpException, HttpStatus, Logger, BadRequestException,
+  Headers,
 } from '@nestjs/common';
 import { PublicKey } from '@solana/web3.js';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { Buffer } from 'buffer';
 import { SolanaService } from './solana.service';
 import { WalrusService } from '../walrus/walrus.service';
 import { ArciumService } from '../arcium/arcium.service';
 import { Device, DeviceDocument } from '../dps/device.schema';
+import { logKV } from '../common/trace';
+import { validateMxeCapsuleForReseal } from '../common/arc1-validation';
 
 @Controller('purchases')
 export class PurchasesController {
@@ -42,16 +46,57 @@ export class PurchasesController {
   }
 
   @Get(':recordPk/meta')
-  async meta(@Param('recordPk') recordPk: string) {
-    this.logger.log('GET /purchases/:recordPk/meta', { recordPk });
+  async meta(@Param('recordPk') recordPk: string, @Headers('x-trace-id') traceId?: string) {
+    const walletFromHeaders = null; // Could extract from auth headers if available
+    
+    logKV(this.logger, 'purchases.meta', {
+      traceId,
+      route: 'GET /purchases/:recordPk/meta',
+      recordPk,
+      wallet: walletFromHeaders,
+    }, 'debug');
+
     const rPk = this.toPublicKeyOrThrow(recordPk, 'recordPk');
 
     let existingBuyerCid: string | null = null;
-    try { existingBuyerCid = await this.solana.getPurchaseRecordBuyerCid(rPk); } catch {}
+    try { existingBuyerCid = await this.solana.getPurchaseRecordBuyerCid(rPk, traceId); } catch {}
 
     try {
       const { listingState, purchaseIndex } = await this.solana.getPurchaseRecordLight(rPk);
       const listingInfo = await this.solana.getListingStateInfo(listingState);
+
+      // Log result summary
+      const hasBuyerCid = !!existingBuyerCid;
+      const hasMxeCid = !!(listingInfo as any).dekCapsuleForMxeCid;
+      
+      logKV(this.logger, 'purchases.meta.result', {
+        traceId,
+        recordPk,
+        listingState: listingState.toBase58(),
+        purchaseIndex,
+        dataCid: listingInfo.dataCid,
+        buyerCid: existingBuyerCid,
+        hasBuyerCid,
+        hasMxeCid,
+      }, 'debug');
+
+      // Log warnings for missing buyer CID
+      if (!existingBuyerCid) {
+        logKV(this.logger, 'purchases.meta.warning', {
+          traceId,
+          recordPk,
+          reason: 'buyer_cid_missing'
+        }, 'warn');
+      }
+
+      // Check if we have MXE capsule but no buyer CID (reseal pending/failed)
+      if (hasMxeCid && !existingBuyerCid) {
+        logKV(this.logger, 'purchases.meta.warning', {
+          traceId,
+          recordPk,
+          reason: 'reseal_pending_or_failed'
+        }, 'warn');
+      }
 
       this.logger.log('meta -> OK', {
         recordPk, listingState: listingState.toBase58(),
@@ -64,6 +109,7 @@ export class PurchasesController {
         purchaseIndex,
         dekCapsuleForBuyerCid: existingBuyerCid,
         dek_capsule_for_buyer_cid: existingBuyerCid,
+        resealStatus: existingBuyerCid ? 'ok' : (hasMxeCid ? 'pending' : 'missing'),
         listingId: listingInfo.listingId,
         dataCid: listingInfo.dataCid,
         deviceId: listingInfo.deviceId,
@@ -170,7 +216,13 @@ export class PurchasesController {
   }
 
   @Get(':recordPk/capsule')
-  async ensureBuyerCapsule(@Param('recordPk') recordPk: string) {
+  async ensureBuyerCapsule(@Param('recordPk') recordPk: string, @Headers('x-trace-id') traceId?: string) {
+    logKV(this.logger, 'purchases.capsule', {
+      traceId,
+      route: 'GET /purchases/:recordPk/capsule',
+      recordPk,
+    }, 'debug');
+
     this.logger.log('=== GET /purchases/:recordPk/capsule ===', { recordPk });
     const rPk = this.toPublicKeyOrThrow(recordPk, 'recordPk');
 
@@ -217,19 +269,64 @@ export class PurchasesController {
     });
     this.logger.log(`✓ MXE capsule resolved from: ${resolvedFrom} (bytes=${mxeCapsule.length})`);
 
-    this.logger.log('=== STEP 5: Submitting ON-CHAIN reseal job ===');
-    const { sig, computationOffset } = await this.arcium.resealDekOnChain({
-      mxeCapsule,
-      buyerX25519Pubkey: buyerEphemeralPubkey,
+    // Validate MXE capsule before reseal
+    const isMxeValid = validateMxeCapsuleForReseal(mxeCapsule, this.logger, {
+      traceId,
+      recordPk,
+      deviceId: listingInfo.deviceId,
     });
 
+    if (!isMxeValid) {
+      logKV(this.logger, 'purchases.reseal.validation_failed', {
+        traceId,
+        recordPk,
+        deviceId: listingInfo.deviceId,
+        mxeSize: mxeCapsule.length,
+        expectedSize: 144,
+      }, 'error');
+      throw new BadRequestException(
+        'MXE capsule validation failed. Invalid capsule size or structure. Please re-register the device.'
+      );
+    }
+
+    this.logger.log('=== STEP 5: Submitting ON-CHAIN reseal job ===');
+    
+    // Get purchase record data for required accounts
+    const record = await this.solana.getPurchaseRecordLight(rPk);
+    
+    // Add structured log before calling reseal
+    this.logger.log({
+      msg: 'reseal.submit',
+      listingState: record.listingState.toBase58(),
+      purchaseRecord: recordPk,
+      buyerX25519PubkeyLen: buyerEphemeralPubkey?.length ?? 0,
+      mxeCidLen: (mxeField || '').length,
+    });
+
+    const { sig, computationOffset, buyerCid } = await this.arcium.resealDekOnChain({
+      mxeCapsule,
+      buyerX25519Pubkey: buyerEphemeralPubkey,
+      listingState: record.listingState,
+      purchaseRecord: rPk,
+    });
+
+    // Log completion of ensureBuyerCapsule
+    this.logger.log({
+      msg: 'ensureBuyerCapsule.complete',
+      record: recordPk,
+      buyerCid,
+      resealTxSig: sig,
+    });
    
     return {
       record: recordPk,
       listingState: listingState.toBase58(),
-      status: 'queued',
+      status: 'completed',
       resealTxSig: sig,
       computationOffset: computationOffset.toString(),
+      dek_capsule_for_buyer_cid: buyerCid,
+      dekCapsuleForBuyerCid: buyerCid,
+      finalized: true,
     };
   }
 }

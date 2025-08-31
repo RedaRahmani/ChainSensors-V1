@@ -1,8 +1,9 @@
 use anchor_lang::prelude::*;
 use arcium_anchor::prelude::*;
+use arcium_client::idl::arcium::types::CallbackAccount;
+
 use crate::ResealDek;
 use crate::ErrorCode;
-
 
 pub fn handler(
     ctx: Context<ResealDek>,
@@ -17,8 +18,6 @@ pub fn handler(
     require!(computation_offset != 0, ErrorCode::ClusterNotSet);
 
     // reseal_dek(mxe_dek: Enc<Mxe, [u64;4]>, buyer: Shared)
-    // Enc<Mxe,_> => PlaintextU128(nonce) then ciphertext limbs
-    // Shared     => ArcisPubkey at the Shared param position
     let args = vec![
         Argument::PlaintextU128(nonce),
         Argument::EncryptedU64(c0),
@@ -28,6 +27,24 @@ pub fn handler(
         Argument::ArcisPubkey(buyer_x25519_pubkey),
     ];
 
-    queue_computation(ctx.accounts, computation_offset, args, vec![], None)?;
+    // The order must match the tail of `ResealDekCallback` Accounts struct.
+    let cb_accounts = vec![
+        CallbackAccount {
+            pubkey: ctx.accounts.listing_state.key(),
+            is_writable: false,
+        },
+        CallbackAccount {
+            pubkey: ctx.accounts.purchase_record.key(),
+            is_writable: true, // we intend to write the CID later (backend-side)
+        },
+    ];
+
+    queue_computation(
+        ctx.accounts,
+        computation_offset,
+        args,
+        cb_accounts,
+        None,
+    )?;
     Ok(())
 }

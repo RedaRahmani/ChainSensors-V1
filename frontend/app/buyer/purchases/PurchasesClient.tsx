@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { RatingModal } from "@/components/rating-modal";
 import { RatingDisplay } from "@/components/rating-display";
+import { newTraceId, felog } from "@/lib/trace";
 
 // ---------- CONFIG ----------
 const API = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3003";
@@ -79,6 +80,14 @@ async function hkdfSha256(keyMaterial: Uint8Array, infoStr: string): Promise<Uin
   const info = new TextEncoder().encode(infoStr);
   const bits = await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info }, ikm, 256);
   return new Uint8Array(bits);
+}
+
+function inspectArc1Capsule(bytes: Uint8Array) {
+  const len = bytes?.length ?? 0;
+  if (len < 80) return { ok:false, reason:'capsule_too_short', len };
+  // Optional: ARC1 header check if present in your format (keep it conservative):
+  // if (!(bytes[0]===0x41 && bytes[1]===0x52 && bytes[2]===0x43 && bytes[3]===0x31)) return { ok:false, reason:'no_arc1_header', len };
+  return { ok:true, len };
 }
 
 // ARC1 capsule -> 32B DEK
@@ -407,12 +416,32 @@ export default function PurchasesClient() {
 }
 
   async function decryptAndDownload(p0: PurchaseRow) {
+    const traceId = newTraceId();
+    
+    felog('decrypt.start', {
+      traceId,
+      recordPk: p0.recordPk,
+      hasDataCid: !!p0.dataCid,
+      hasBuyerCid: !!p0.dekCapsuleForBuyerCid,
+      hasListingState: !!p0.listingState,
+      purchaseIndex: p0.purchaseIndex,
+    });
+
     try {
       setBusy("Decrypting…"); setErr(null);
 
       // Ensure we have dataCid/listing info
       const ensure = async (p: PurchaseRow) => {
         if (p.dataCid && p.listingState != null && p.purchaseIndex != null) return p;
+        
+        felog('decrypt.ensure_meta', {
+          traceId,
+          recordPk: p.recordPk,
+          needsDataCid: !p.dataCid,
+          needsListingState: p.listingState == null,
+          needsPurchaseIndex: p.purchaseIndex == null,
+        });
+        
         const meta = await fetchPurchaseMeta(p.recordPk);
         return {
           ...p,
@@ -425,7 +454,20 @@ export default function PurchasesClient() {
       };
 
       const p = await ensure(p0);
-      if (!p.dataCid) throw new Error("dataCid missing for this purchase");
+      if (!p.dataCid) {
+        felog('decrypt.error.no_data_cid', { traceId, recordPk: p.recordPk });
+        throw new Error("dataCid missing for this purchase");
+      }
+
+      felog('decrypt.meta_resolved', {
+        traceId,
+        recordPk: p.recordPk,
+        dataCid: p.dataCid,
+        listingId: p.listingId,
+        listingState: p.listingState,
+        purchaseIndex: p.purchaseIndex,
+        dekCapsuleForBuyerCid: p.dekCapsuleForBuyerCid,
+      });
 
       // Load ephemeral secret
       const keyCandidates = [
@@ -437,39 +479,145 @@ export default function PurchasesClient() {
         `ephSk:${p.recordPk}`,
       ].filter(Boolean) as string[];
 
+      felog('decrypt.ephemeral_lookup', {
+        traceId,
+        recordPk: p.recordPk,
+        keyCandidates,
+      });
+
       const found = keyCandidates.map(k => localStorage.getItem(k)).find(Boolean) || scanAnyEphSk();
       if (!found) {
+        felog('decrypt.error.no_ephemeral_secret', {
+          traceId,
+          recordPk: p.recordPk,
+          triedKeys: keyCandidates,
+        });
         throw new Error(`Ephemeral secret not found. Tried: ${keyCandidates.join(" , ")} and an auto-scan of ephSk:*`);
       }
+      
       const ephSk = b64ToU8(found);
+      felog('decrypt.ephemeral_found', {
+        traceId,
+        recordPk: p.recordPk,
+        ephSkLength: ephSk.length,
+      });
 
       // Buyer capsule
       let buyerCid = p.dekCapsuleForBuyerCid;
       if (!buyerCid) {
+        felog('decrypt.buyer_capsule_refresh', {
+          traceId,
+          recordPk: p.recordPk,
+        });
         buyerCid = await refreshBuyerCapsule(p);
-        if (!buyerCid) throw new Error("Buyer capsule not available yet");
+        if (!buyerCid) {
+          felog('decrypt.error.no_buyer_capsule', {
+            traceId,
+            recordPk: p.recordPk,
+          });
+          throw new Error("Buyer capsule not available yet");
+        }
       }
+
+      felog('decrypt.buyer_capsule_fetch', {
+        traceId,
+        recordPk: p.recordPk,
+        buyerCid,
+      });
 
       // Capsule -> DEK
       const capsuleBytes = await fetchBlob(buyerCid);
+      
+      // Add pre-decrypt capsule sanity check
+      const inspection = inspectArc1Capsule(capsuleBytes);
+      if (!inspection.ok) {
+        console.debug('[E2E] decrypt:bad_capsule', { reason: inspection.reason, len: inspection.len });
+        throw new Error(`Invalid capsule: ${inspection.reason} (length: ${inspection.len} bytes)`);
+      }
+      
+      felog('decrypt.capsule_validation', {
+        traceId,
+        recordPk: p.recordPk,
+        buyerCid,
+        capsuleSize: capsuleBytes.length,
+        expectedSize: 144,
+        isValidSize: capsuleBytes.length === 144,
+        isMinimumSize: capsuleBytes.length >= 48,
+      });
+
+      if (capsuleBytes.length < 48) {
+        felog('decrypt.error.capsule_too_small', {
+          traceId,
+          recordPk: p.recordPk,
+          buyerCid,
+          capsuleSize: capsuleBytes.length,
+          minimumSize: 48,
+        });
+        throw new Error(`Buyer capsule too small: ${capsuleBytes.length} bytes (minimum 48 bytes expected)`);
+      }
+
+      if (capsuleBytes.length !== 144) {
+        felog('decrypt.warning.capsule_size_unexpected', {
+          traceId,
+          recordPk: p.recordPk,
+          buyerCid,
+          capsuleSize: capsuleBytes.length,
+          expectedSize: 144,
+        });
+      }
+
       const dek = await arc1DecryptCapsuleToDek(ephSk, capsuleBytes);
+      
+      felog('decrypt.dek_extracted', {
+        traceId,
+        recordPk: p.recordPk,
+        dekLength: dek.length,
+        expectedDekLength: 32,
+      });
 
       // Fetch dataset & decrypt if envelope
+      felog('decrypt.dataset_fetch', {
+        traceId,
+        recordPk: p.recordPk,
+        dataCid: p.dataCid,
+      });
+
       const payload = await fetchJsonOrBytes(p.dataCid);
       let fileBytes: Uint8Array;
+      
       if (payload && typeof payload === "object" && !("byteLength" in payload)) {
         if (Array.isArray(payload)) {
+          felog('decrypt.envelope_array', {
+            traceId,
+            recordPk: p.recordPk,
+            envelopeCount: payload.length,
+          });
           const parts: Uint8Array[] = [];
           for (const env of payload) parts.push(await decryptEnvelopeWithDek(dek, env));
           const total = parts.reduce((n, u) => n + u.length, 0);
           fileBytes = new Uint8Array(total);
           let off = 0; for (const u of parts) { fileBytes.set(u, off); off += u.length; }
         } else {
+          felog('decrypt.envelope_single', {
+            traceId,
+            recordPk: p.recordPk,
+          });
           fileBytes = await decryptEnvelopeWithDek(dek, payload);
         }
       } else {
+        felog('decrypt.raw_payload', {
+          traceId,
+          recordPk: p.recordPk,
+          payloadSize: (payload as Uint8Array).length,
+        });
         fileBytes = payload as Uint8Array;
       }
+
+      felog('decrypt.success', {
+        traceId,
+        recordPk: p.recordPk,
+        finalFileSize: fileBytes.length,
+      });
 
       // Download
       const keyHint = p.listingId || p.listingState || p.recordPk || "dataset";
@@ -482,8 +630,22 @@ export default function PurchasesClient() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      
+      felog('decrypt.download_complete', {
+        traceId,
+        recordPk: p.recordPk,
+        filename: `${keyHint}.bin`,
+      });
     } catch (e: any) {
-      console.error(e);
+      felog('decrypt.error', {
+        traceId,
+        recordPk: p0.recordPk,
+        error: e?.message || 'Unknown error',
+        errorName: e?.name,
+        errorStack: e?.stack,
+      });
+      
+      console.error('[E2E] Decrypt failed:', e);
       setErr(e?.message || "Decrypt failed");
       alert(`Decrypt failed: ${e?.message || "Unknown error"}`);
     } finally {
