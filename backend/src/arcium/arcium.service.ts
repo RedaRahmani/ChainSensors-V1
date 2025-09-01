@@ -1,4 +1,3 @@
-
 import { Injectable, Logger, forwardRef, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as anchor from '@coral-xyz/anchor';
@@ -24,10 +23,13 @@ import {
   RescueCipher,
 } from '@arcium-hq/client';
 
-import { randomBytes } from 'crypto';
+import { randomBytes, createHash } from 'crypto';
 import { logKV } from '../common/trace';
 import { WalrusService } from '../walrus/walrus.service';
 import { SolanaService } from '../solana/solana.service';
+import { u128NonceToIv12BE, packArc1Capsule } from '../crypto/capsule';
+import * as fs from 'fs-extra';
+import * as path from 'path';
 const clientAny: any = require('@arcium-hq/client');
 
 @Injectable()
@@ -37,11 +39,16 @@ export class ArciumService {
   private program!: anchor.Program;
   private cachedMxePub?: Uint8Array;
 
+  // NEW: dynamic callback discriminator cache
+  private callbackDiscHexSet?: Set<string>;
+  private discNameByHex?: Map<string, string>;
+
   // Constants
   private readonly CALLBACK_TIMEOUT_MS = Number(process.env.RESEAL_CALLBACK_TIMEOUT_MS ?? 300_000); // 5m default
   private readonly POLL_SLEEP_MS = Number(process.env.RESEAL_POLL_SLEEP_MS ?? 1200);
   private readonly USE_CLIENT_FINALIZE =
     (process.env.USE_CLIENT_FINALIZE ?? '0') !== '0';
+  private readonly IV_MODE = process.env.RESEAL_IV_MODE ?? 'be_first12';
 
   constructor(
     private readonly config: ConfigService,
@@ -64,14 +71,99 @@ export class ArciumService {
     anchor.setProvider(this.provider);
 
     this.logger.log({ msg: 'rpc.init', http: rpcUrl, ws: process.env.SOLANA_WS || '(derived default)' });
+    this.logger.log({ msg: 'reseal.config', iv_mode: this.IV_MODE });
 
     this.program = new anchor.Program(idl as any, this.provider);
+
+    // Build discriminator maps up-front so early logs are useful
+    this.buildDiscriminatorMaps();
   }
 
   private getAppProgramId(): PublicKey {
     const appPid = this.config.get<string>('SOLANA_PROGRAM_ID') || (idl as any)?.address;
     if (!appPid) throw new Error('SOLANA_PROGRAM_ID or idl.address is required');
     return new PublicKey(appPid);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Dynamic discriminator helpers (fix: don't hard-code callback head8)
+  // ---------------------------------------------------------------------------
+
+  /** sha256("global:"+name) first 8 bytes → hex string */
+  private instrDiscHex(name: string): string {
+    return createHash('sha256').update(`global:${name}`).digest().subarray(0, 8).toString('hex');
+  }
+
+  /** Build maps: head8 hex → idl name, and set of callback head8s */
+  private buildDiscriminatorMaps(): void {
+    if (this.discNameByHex && this.callbackDiscHexSet) return;
+    const discNameByHex = new Map<string, string>();
+    const callbackSet = new Set<string>();
+
+    try {
+      const idlAny: any = this.program.idl ?? idl;
+      const instrs: Array<{ name: string }> = idlAny?.instructions ?? [];
+
+      for (const i of instrs) {
+        const h = this.instrDiscHex(i.name);
+        discNameByHex.set(h, i.name);
+        if (/callback/i.test(i.name)) callbackSet.add(h);
+      }
+
+      // Allow explicit callback method name override
+      const explicitCbName =
+        this.config.get<string>('ARCIUM_CALLBACK_NAME') ||
+        process.env.ARCIUM_CALLBACK_NAME;
+      if (explicitCbName) {
+        callbackSet.add(this.instrDiscHex(explicitCbName));
+      }
+
+      // Back-compat default: include common names if not in IDL for some reason
+      ['reseal_dek_callback', 'resealDekCallback'].forEach((n) => {
+        callbackSet.add(this.instrDiscHex(n));
+      });
+
+      // Allow hex override(s) via env (comma-separated)
+      const extraHex =
+        this.config.get<string>('ARCIUM_CALLBACK_DISC_HEX') ||
+        process.env.ARCIUM_CALLBACK_DISC_HEX;
+      if (extraHex) {
+        for (const raw of extraHex.split(',').map(s => s.trim()).filter(Boolean)) {
+          const clean = raw.toLowerCase().replace(/^0x/, '');
+          if (clean.length === 16) callbackSet.add(clean);
+        }
+      }
+
+      this.discNameByHex = discNameByHex;
+      this.callbackDiscHexSet = callbackSet;
+
+      // Helpful one-time log
+      this.logger.log({
+        msg: 'idl.discriminators.built',
+        nInstructions: instrs.length,
+        callbacks: [...callbackSet].map(h => `${h}:${discNameByHex.get(h) || '?'}`),
+      });
+    } catch (e) {
+      // If this fails, we still proceed; extractor will use a small default set
+      this.logger.warn({ msg: 'idl.discriminators.build.failed', error: String(e) });
+      this.discNameByHex = this.discNameByHex || new Map();
+      this.callbackDiscHexSet = this.callbackDiscHexSet || new Set([
+        this.instrDiscHex('reseal_dek_callback'),
+        this.instrDiscHex('resealDekCallback'),
+      ]);
+    }
+  }
+
+  /** Return the cached set of callback discriminators (hex) */
+  private getCallbackDiscSet(): Set<string> {
+    if (!this.callbackDiscHexSet) this.buildDiscriminatorMaps();
+    return this.callbackDiscHexSet!;
+  }
+
+  /** If we know the name for a head8, return it for nicer logs */
+  private discHexToName(hex: string): string | undefined {
+    if (!this.discNameByHex) this.buildDiscriminatorMaps();
+    return this.discNameByHex!.get(hex);
   }
 
   // ---------------------------------------------------------------------------
@@ -346,104 +438,7 @@ export class ArciumService {
     const compDefAccount = await this.ensureResealCompDef();
     const arciumProgram = getArciumProgAddress();
 
-    // Task 2: Dump the ComputationDefinitionAccount and verify it points to reseal_dek_callback
-    try {
-      // Try to fetch comp def from Arcium program using connection
-      const compDefInfo = await this.provider.connection.getAccountInfo(compDefAccount);
-      if (compDefInfo) {
-        this.logger.log({
-          msg: 'reseal.compdef.raw',
-          compDef: compDefAccount.toBase58(),
-          owner: compDefInfo.owner.toBase58(),
-          dataLength: compDefInfo.data.length,
-          lamports: compDefInfo.lamports,
-        });
-        
-        // Try to parse as anchor account if possible
-        try {
-          // This might fail if we don't have the right IDL, but that's ok
-          const arciumIdl = clientAny.idl || clientAny.ARCIUM_IDL;
-          if (arciumIdl) {
-            // Try to decode using Arcium's IDL if available
-            this.logger.log({
-              msg: 'reseal.compdef.arcium_available',
-              hasArciumIdl: !!arciumIdl,
-            });
-          }
-        } catch (e) {
-          // Continue with limited info
-          this.logger.debug('Could not parse comp def with Arcium IDL:', e);
-        }
-      } else {
-        this.logger.warn({
-          msg: 'reseal.compdef.not_found',
-          compDef: compDefAccount.toBase58(),
-        });
-      }
-    } catch (e) {
-      this.logger.warn('Failed to fetch comp def account:', e);
-    }
-
-    // Task 1: Log and assert callback wiring at submit time
-    const expectedCallbackDiscriminator = [33, 196, 107, 60, 35, 221, 204, 245]; // From IDL reseal_dek_callback
-    const expectedCallbackDiscHex = Buffer.from(expectedCallbackDiscriminator).toString('hex');
-    
-    this.logger.log({
-      msg: 'reseal.callback.plan',
-      compDef: compDefAccount.toBase58(),
-      expectedCallbackDiscHex,
-      callbackAccounts: {
-        payer: this.provider.wallet.publicKey.toBase58(),
-        arciumProgram: arciumProgram.toBase58(),
-        compDef: compDefAccount.toBase58(),
-        instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY.toBase58(),
-        listingState: listingState.toBase58(),
-        purchaseRecord: purchaseRecord.toBase58(),
-      }
-    });
-
-    // Assert callback discriminator matches reseal_dek_callback
-    try {
-      const compDefInfo = await this.provider.connection.getAccountInfo(compDefAccount);
-      if (compDefInfo && compDefInfo.data.length >= 8) {
-        // Try to find the callback discriminator in the comp def data
-        // This is a basic check - the exact location depends on Arcium's internal structure
-        this.logger.log({
-          msg: 'reseal.compdef.assert.ok',
-          expectedDiscriminator: expectedCallbackDiscHex,
-          compDefLength: compDefInfo.data.length,
-        });
-      }
-    } catch (e) {
-      this.logger.warn('Could not verify comp def callback discriminator:', e);
-    }
-
-    // Assert callback account order matches expected order
-    const expectedCallbackAccounts = [
-      this.provider.wallet.publicKey.toBase58(),
-      arciumProgram.toBase58(),
-      compDefAccount.toBase58(),
-      SYSVAR_INSTRUCTIONS_PUBKEY.toBase58(),
-      listingState.toBase58(),
-      purchaseRecord.toBase58(),
-    ];
-    
-    // This is a conceptual check - the actual callback accounts are managed by Arcium
-    // but we can verify our accounts are in the expected order for the callback
-    const actualCallbackOrder = [
-      this.provider.wallet.publicKey,
-      arciumProgram,
-      compDefAccount,
-      SYSVAR_INSTRUCTIONS_PUBKEY,
-      listingState,
-      purchaseRecord,
-    ];
-    
-    if (actualCallbackOrder.length !== 6) {
-      throw new Error('reseal.callback.bad_order: Expected 6 callback accounts');
-    }
-
-    // EXTRA helpful logs for diagnosing Anchor 2012 "Left/Right"
+    // Helpful logs for diagnosing mismatched accounts
     this.logger.log('mxeAccount    : ' + mxeAccount.toBase58());
     this.logger.log('clusterAccount: ' + clusterAccount.toBase58());
     this.logger.log('executingPool : ' + executingPool.toBase58());
@@ -519,8 +514,8 @@ export class ArciumService {
           try {
             const finalizeSig = await awaitComputationFinalization(
               this.provider as any,
-              programId,              // (fixed order)
-              computationOffset,
+              computationOffset,      // BN first
+              programId,              // PublicKey second
               this.toFinality(params.commitment)
             );
             this.logger.log({ msg: 'reseal.finalize.receipt', finalizeSig });
@@ -529,11 +524,20 @@ export class ArciumService {
               maxSupportedTransactionVersion: 0,
               commitment: this.toFinality(params.commitment),
             });
-            if (!tx?.transaction?.message) throw new Error('finalize_tx_not_found');
-            const { ixData, hit } = this.extractCallbackIxData(tx, programId, finalizeSig);
+
+            const { ixData, hit } = this.extractIxDataByDiscs(tx, programId, this.getCallbackDiscSet(), finalizeSig);
             if (!hit || !ixData) throw new Error('finalize_tx_missing_callback_ix');
             const decoded = this.decodeResealCallback(ixData);
+
+            await this.writeBuyerCapsuleDebug(decoded.buyerCapsule, '_finalize');
             const buyerCid = await this.walrus.uploadData(decoded.buyerCapsule);
+            this.logger.log({
+              msg: 'reseal.buyer_capsule.uploaded',
+              buyerCid,
+              arc1_length: decoded.buyerCapsule.length,
+              via: 'finalize_path',
+            });
+
             await this.solana.finalizePurchaseOnChain({ listing: listingState, record: purchaseRecord, dekCapsuleForBuyerCid: buyerCid });
             return { signature: finalizeSig, buyerCid };
           } catch (e) {
@@ -584,7 +588,16 @@ export class ArciumService {
         c3Head: Buffer.from(decoded.c3).subarray(0,4).toString('hex'),
         callbackSig: winner.sig,
       });
+
+      await this.writeBuyerCapsuleDebug(decoded.buyerCapsule, '_fallback');
       const buyerCid = await this.walrus.uploadData(decoded.buyerCapsule);
+      this.logger.log({
+        msg: 'reseal.buyer_capsule.uploaded',
+        buyerCid,
+        arc1_length: decoded.buyerCapsule.length,
+        via: 'fallback_path',
+      });
+
       await this.solana.finalizePurchaseOnChain({ listing: listingState, record: purchaseRecord, dekCapsuleForBuyerCid: buyerCid });
       return { signature: winner.sig, buyerCid };
     };
@@ -593,7 +606,7 @@ export class ArciumService {
     const eventPath = (async () => {
       const eventResult = await eventScanPath;
       if (!eventResult) return null;
-      
+
       const ev = eventResult.eventData;
       this.logger.log({
         msg: 'reseal.event.processing',
@@ -601,34 +614,60 @@ export class ArciumService {
         record: ev.record?.toBase58?.() || ev.record?.toString?.(),
         signature: eventResult.signature,
       });
-      
-      // Build the 144-byte buyer capsule buffer
+
+      // Extract components from event data
       const c0 = Buffer.from(ev.c0);
       const c1 = Buffer.from(ev.c1);
       const c2 = Buffer.from(ev.c2);
       const c3 = Buffer.from(ev.c3);
-      const nonce = Buffer.from(ev.nonce);
-      
-      const capsule = Buffer.concat([c0, c1, c2, c3, nonce]);
-      
-      if (capsule.length !== 144) {
-        throw new Error(`buyer_capsule.bad_length: expected 144, got ${capsule.length}`);
+      const nonce = Buffer.from(ev.nonce); // LE from callback
+
+      // Extract ciphertext and tag from limbs for ARC1 format
+      const limbs = Buffer.concat([c0, c1, c2, c3]); // 128 bytes
+      if (limbs.length < 48) {
+        throw new Error(`limbs too short for ciphertext+tag extraction: ${limbs.length}`);
       }
-      
-      const buyerCid = await this.walrus.uploadData(capsule);
+      const ciphertext32 = limbs.slice(0, 32);
+      const tag16 = limbs.slice(32, 48);
+
+      // Convert nonce (LE) to BE → 12-byte IV
+      const iv12 = this.iv12FromNonceLE(nonce);
+
+      // Create 96-byte ARC1 capsule for buyer
+      const arc1Capsule = packArc1Capsule({
+        senderEphemeral32: new Uint8Array(ev.encryption_key || Buffer.alloc(32)), // Use encryption_key from event
+        iv12,
+        ciphertext32: new Uint8Array(ciphertext32),
+        tag16: new Uint8Array(tag16),
+      });
+
+      this.logger.log({
+        msg: 'reseal.event.arc1_generated',
+        iv_mode: this.IV_MODE,
+        arc1_length: arc1Capsule.length,
+        signature: eventResult.signature,
+      });
+
+      await this.writeBuyerCapsuleDebug(Buffer.from(arc1Capsule), '_event');
+      const buyerCid = await this.walrus.uploadData(Buffer.from(arc1Capsule));
+      this.logger.log({
+        msg: 'reseal.buyer_capsule.uploaded',
+        buyerCid,
+        arc1_length: arc1Capsule.length,
+        via: 'event_path',
+      });
+
       await this.solana.finalizePurchaseOnChain({ listing: listingState, record: purchaseRecord, dekCapsuleForBuyerCid: buyerCid });
       return { signature: eventResult.signature, buyerCid };
     })();
 
-    // Task 4: Use WebSocket path as primary, with REST polling as last-chance fallback
+    // WebSocket primary; then finalize path; then event scan; else fall back to REST polling
     let buyerCid: string;
-    
+
     try {
-      // Helper: convert a Promise<T|null> to a rejecting promise when T is null
       const orRejectNull = <T>(p: Promise<T | null>) =>
         p.then(v => (v === null ? Promise.reject('null') : v));
 
-      // Prefer WebSocket first, then finalize path, then event scan. Ignore nulls/rejections.
       const primary = await Promise.any([
         orRejectNull(fastPath),
         orRejectNull(finalizePath),
@@ -645,13 +684,11 @@ export class ArciumService {
         'All callback transaction approaches failed, falling back to legacy event polling:',
         callbackError
       );
-      
+
       try {
-        // Last resort: REST fallback
         const restResult = await runRestFallback();
         buyerCid = restResult.buyerCid;
       } catch (restError) {
-        // Final fallback to legacy polling
         buyerCid = await this.pollResealCompletion({
           mempoolAccount,
           computationAccount,
@@ -669,14 +706,14 @@ export class ArciumService {
     const buyerX25519PubkeyHash = Array.from(buyerX25519Pubkey.slice(0, 6))
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
-    
+
     logKV(this.logger, 'arcium.reseal.complete', {
       traceId,
       recordPk,
       listingState: listingState.toBase58(),
       buyerX25519PubkeyHash,
-      mxeCid: null, // Could extract from caller if needed
-      buyerCapsuleSize: 144, // Will be set when uploaded
+      mxeCid: null,
+      buyerCapsuleSize: 144,
       sig,
     }, 'debug');
 
@@ -688,9 +725,14 @@ export class ArciumService {
   // Helper functions
   // ---------------------------------------------------------------------------
 
-  // sleep helper (reuse elsewhere if you want)
   private sleep(ms: number) {
     return new Promise(res => setTimeout(res, ms));
+  }
+
+  // Convert LE u128 nonce → BE u128, then derive 12-byte IV (BE first 12)
+  private iv12FromNonceLE(nonceLE: Uint8Array | Buffer): Uint8Array {
+    const be = Buffer.from(nonceLE).reverse(); // LE → BE
+    return u128NonceToIv12BE(new Uint8Array(be));
   }
 
   // --- Key normalization helpers ---
@@ -725,7 +767,7 @@ export class ArciumService {
       return legacyKeys.map((k: any) => this.toPubkey(k));
     }
 
-    // v0: staticAccountKeys: string[], loadedAddresses: {writable: string[], readonly: string[]}
+    // v0: staticAccountKeys + loadedAddresses
     const statics: any[] = msg.staticAccountKeys ?? [];
     const loadedW: any[] = tx.meta?.loadedAddresses?.writable ?? [];
     const loadedR: any[] = tx.meta?.loadedAddresses?.readonly ?? [];
@@ -733,12 +775,12 @@ export class ArciumService {
   }
 
   /** Scan a transaction for our callback (top-level + inner CPIs). Returns first hit. */
-  private extractCallbackIxData(
+  private extractIxDataByDiscs(
     tx: any,
     programId: PublicKey,
+    discSet: Set<string>,
     signature?: string
   ): { ixData: Buffer | null; hit: boolean } {
-    const DISC = Buffer.from([33,196,107,60,35,221,204,245]); // reseal_dek_callback
     const msg: any = tx.transaction.message;
     const isV0 = 'compiledInstructions' in msg;
     const top = isV0 ? (msg.compiledInstructions ?? []) : (msg.instructions ?? []);
@@ -747,22 +789,25 @@ export class ArciumService {
 
     const test = (ix: any, src: 'top'|'inner', idx: number) => {
       try {
-        const pid = keys[ix.programIdIndex]; // now definitely a PublicKey
+        const pid = keys[ix.programIdIndex];
         if (!pid || !pid.equals(programId)) return null;
 
-        const raw = this.decodeIxDataString(ix.data); // base-58 first; base64 fallback
+        const raw = this.decodeIxDataString(ix.data);
         if (raw.length >= 8) {
-          const head8 = raw.subarray(0,8);
+          const head8 = raw.subarray(0,8).toString('hex');
+          const name = this.discHexToName(head8);
           this.logger.debug({
             msg: 'reseal.callback.pid_match',
             sig: signature || 'unknown',
-            head8: head8.toString('hex')
+            head8,
+            name: name || '(unknown)',
           });
-          if (head8.equals(DISC)) {
+          if (discSet.has(head8)) {
             this.logger.debug({
-              msg: 'reseal.callback.bytes',
+              msg: 'reseal.callback.disc.hit',
               src, idx,
-              disc: head8.toString('hex'),
+              disc: head8,
+              name: name || '(unknown)',
               len: raw.length,
             });
             return raw;
@@ -791,28 +836,46 @@ export class ArciumService {
   }
 
   // ---------------------------------------------------------------------------
+  // Debug utilities
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Write buyer capsule to debug file and log detailed hex preview
+   */
+  private async writeBuyerCapsuleDebug(capsule: Buffer, suffix: string = ''): Promise<void> {
+    try {
+      const artifactsDir = path.join(process.cwd(), 'artifacts', 'reseal');
+      await fs.ensureDir(artifactsDir);
+
+      const filename = `buyer_capsule.arc1${suffix}.bin`;
+      const filepath = path.join(artifactsDir, filename);
+
+      await fs.writeFile(filepath, capsule);
+
+      this.logger.log({
+        msg: 'reseal.debug.capsule_written',
+        file: filepath,
+        size: capsule.length,
+        magic: capsule.subarray(0, 4).toString('hex'), // "41524331" (ARC1)
+        sender_ephemeral_preview: capsule.subarray(4, 12).toString('hex'),
+        iv_preview: capsule.subarray(36, 44).toString('hex'),
+        ciphertext_preview: capsule.subarray(48, 56).toString('hex'),
+        tag_preview: capsule.subarray(80, 88).toString('hex'),
+      });
+    } catch (e) {
+      this.logger.warn({ msg: 'reseal.debug.write_failed', error: String(e) });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Strict IDL-based decoder for reseal callback
   // ---------------------------------------------------------------------------
 
-  /** Decode ix data for `reseal_dek_callback` based on the IDL.
-   *  ixData is the raw instruction data (base64 decoded) INCLUDING the 8-byte instruction discriminator.
-   *  Layout (after discriminator):
-   *    ComputationOutputs<O> as a rust enum:
-   *      - 1 byte variant tag (0 = Success, 1 = Failure)
-   *      - if Success, payload is ResealDekOutput { field_0: SharedEncryptedStruct<4> }
-   *    SharedEncryptedStruct<4> layout:
-   *      - encryption_key: [u8;32]
-   *      - nonce: u128 (LE, 16 bytes)
-   *      - ciphertexts: [[u8;32]; 4]  -> c0,c1,c2,c3 in order
-   */
   private decodeResealCallback(ixData: Buffer) {
-    const DISC = Buffer.from([33, 196, 107, 60, 35, 221, 204, 245]); // reseal_dek_callback
+    // NOTE: we no longer check for a single fixed discriminator here; the caller
+    // has confirmed this ix belongs to one of the callback discriminators.
     if (ixData.length < 8 + 1 + 32 + 16 + 4 * 32) {
       throw new Error(`callback ixData too short: ${ixData.length}`);
-    }
-    const disc = ixData.subarray(0, 8);
-    if (!disc.equals(DISC)) {
-      throw new Error(`wrong callback discriminator (got ${disc.toString('hex')})`);
     }
 
     const body = ixData.subarray(8);
@@ -820,7 +883,6 @@ export class ArciumService {
 
     const variant = body[o]; o += 1;
     if (variant !== 0) {
-      // Failure
       throw new Error('Reseal callback returned Failure');
     }
 
@@ -831,19 +893,52 @@ export class ArciumService {
     const c2           = body.subarray(o, o + 32); o += 32;
     const c3           = body.subarray(o, o + 32); o += 32;
 
-    // Our buyer capsule format is [c0,c1,c2,c3,nonce] = 128 + 16 = 144 bytes
-    const buyerCapsule = Buffer.concat([c0, c1, c2, c3, nonceLE]);
-    if (buyerCapsule.length !== 144) {
-      throw new Error(`buyer capsule must be 144 bytes, got ${buyerCapsule.length}`);
+    // Create raw 144-byte MXE capsule format (nonce-first for MXE storage)
+    const mxeCapsule = Buffer.concat([nonceLE, c0, c1, c2, c3]);
+    if (mxeCapsule.length !== 144) {
+      throw new Error(`MXE capsule must be 144 bytes, got ${mxeCapsule.length}`);
     }
 
-    return { encryptionKey, nonceLE, c0, c1, c2, c3, buyerCapsule };
+    // Extract ciphertext and tag from limbs for ARC1 format
+    const limbs = Buffer.concat([c0, c1, c2, c3]); // 128 bytes
+    if (limbs.length < 48) {
+      throw new Error(`limbs too short for ciphertext+tag extraction: ${limbs.length}`);
+    }
+    const ciphertext32 = limbs.slice(0, 32);
+    const tag16 = limbs.slice(32, 48);
+
+    // Convert LE nonce → BE, then to 12-byte IV (first 12 bytes)
+    const iv12 = this.iv12FromNonceLE(nonceLE);
+
+    // Create 96-byte ARC1 capsule for buyer
+    const arc1Capsule = packArc1Capsule({
+      senderEphemeral32: new Uint8Array(encryptionKey),
+      iv12,
+      ciphertext32: new Uint8Array(ciphertext32),
+      tag16: new Uint8Array(tag16),
+    });
+
+    this.logger.log({
+      msg: 'reseal.callback.arc1_generated',
+      iv_mode: this.IV_MODE,
+      iv_preview: Buffer.from(iv12).subarray(0, 8).toString('hex'),
+      arc1_length: arc1Capsule.length,
+      mxe_length: mxeCapsule.length,
+    });
+
+    return {
+      encryptionKey,
+      nonceLE,
+      c0, c1, c2, c3,
+      mxeCapsule,
+      buyerCapsule: Buffer.from(arc1Capsule),
+    };
   }
 
   // ---------------------------------------------------------------------------
   // Backoff utils
   // ---------------------------------------------------------------------------
-  
+
   private async backoffWithJitter(baseMs: number): Promise<void> {
     const jitter = Math.random() * 0.5 + 0.75; // 0.75-1.25x multiplier
     const delayMs = Math.floor(baseMs * jitter);
@@ -864,6 +959,7 @@ export class ArciumService {
   }): Promise<{ sig: string; ixData: Buffer }> {
     const { programId, purchaseRecord, listingState, afterSignature, commitment = 'confirmed', timeoutMs } = params;
     const start = Date.now();
+    const discSet = this.getCallbackDiscSet();
     const ENABLE_ADDRESS_PAIR_SCANS = process.env.ENABLE_ADDRESS_PAIR_SCANS === 'true';
 
     const pollOne = async (addr: PublicKey) => {
@@ -873,16 +969,17 @@ export class ArciumService {
         afterSignature,
         timeoutMs
       });
-      
+
       const seen = new Set<string>();
       let txsInspected = 0;
       let before: string | undefined = undefined;
-      
+
       while (Date.now() - start < timeoutMs) {
         try {
           const opts: any = { limit: 50 };
-          if (afterSignature) opts.until = afterSignature;
           if (before) opts.before = before;
+          if (afterSignature) opts.until = afterSignature; // page only *newer* than submit
+          // (RPC semantics documented by Solana: `before`/`until` bound the range.)  // 
 
           const sigs = await this.provider.connection.getSignaturesForAddress(
             addr,
@@ -890,72 +987,39 @@ export class ArciumService {
             commitment as any
           );
 
-          if (!sigs.length) { 
-            await this.backoffWithJitter(this.POLL_SLEEP_MS); 
-            continue; 
+          if (!sigs.length) {
+            await this.backoffWithJitter(this.POLL_SLEEP_MS);
+            continue;
           }
 
-          // Process newest→oldest
           for (const s of sigs) {
-            // If already seen, skip
-            if (seen.has(s.signature)) {
-              continue;
-            }
-
-            // Mark as seen
+            if (seen.has(s.signature)) continue;
             seen.add(s.signature);
             txsInspected++;
 
             const tx = await this.provider.connection.getTransaction(s.signature, {
-              maxSupportedTransactionVersion: 0, 
+              maxSupportedTransactionVersion: 0,
               commitment
             });
-            
             if (!tx?.transaction?.message) continue;
 
-            // Log any "reseal_dek_callback: entry" appearances
-            if (tx.meta?.logMessages) {
-              for (const logLine of tx.meta.logMessages) {
-                if (logLine.includes('reseal_dek_callback: entry')) {
-                  this.logger.log({ 
-                    msg: 'reseal.callback.entry.log', 
-                    sig: s.signature,
-                    programId: programId.toBase58()
-                  });
-                }
-                if (logLine.includes('reseal_dek_callback: verified arcium caller')) {
-                  this.logger.log({ 
-                    msg: 'reseal.callback.verified.log', 
-                    sig: s.signature 
-                  });
-                }
-                if (logLine.includes('reseal_dek_callback: emitting ResealOutput event')) {
-                  this.logger.log({ 
-                    msg: 'reseal.callback.emitting.log', 
-                    sig: s.signature 
-                  });
-                }
-              }
-            }
-
-            const { ixData, hit } = this.extractCallbackIxData(tx, programId, s.signature);
+            const { ixData, hit } = this.extractIxDataByDiscs(tx, programId, discSet, s.signature);
             if (hit && ixData) {
-              this.logger.log({ 
-                msg: 'reseal.callback.detected', 
-                sig: s.signature, 
+              this.logger.log({
+                msg: 'reseal.callback.detected',
+                sig: s.signature,
                 address: addr.toBase58(),
-                txsInspected 
+                txsInspected
               });
               return { sig: s.signature, ixData };
             }
           }
 
-          // Set up for next page if we didn't find what we're looking for
           before = sigs[sigs.length - 1].signature;
           await this.backoffWithJitter(this.POLL_SLEEP_MS);
         } catch (error: any) {
           if (error.message?.includes('429')) {
-            const backoffMs = Math.min(5000, this.POLL_SLEEP_MS * 2); // Cap at 5s
+            const backoffMs = Math.min(5000, this.POLL_SLEEP_MS * 2);
             this.logger.warn({ msg: 'reseal.callback.429.backoff', backoffMs });
             await this.backoffWithJitter(backoffMs);
           } else {
@@ -964,7 +1028,7 @@ export class ArciumService {
           }
         }
       }
-      
+
       this.logger.warn({
         msg: 'reseal.callback.timeout.debug',
         address: addr.toBase58(),
@@ -974,7 +1038,6 @@ export class ArciumService {
       throw new Error('reseal.callback.timeout');
     };
 
-    // Only scan address pairs if explicitly enabled (default off)
     if (ENABLE_ADDRESS_PAIR_SCANS && listingState && !listingState.equals(purchaseRecord)) {
       this.logger.debug({ msg: 'reseal.callback.poll.dual', purchaseRecord: purchaseRecord.toBase58(), listingState: listingState.toBase58() });
       return await Promise.any([pollOne(purchaseRecord), pollOne(listingState)]);
@@ -991,6 +1054,7 @@ export class ArciumService {
     const { programId, afterSignature, commitment = 'confirmed', timeoutMs } = params;
     const start = Date.now();
     const addr = programId;
+    const discSet = this.getCallbackDiscSet();
 
     this.logger.debug({
       msg: 'reseal.callback.poll.start.program',
@@ -998,7 +1062,7 @@ export class ArciumService {
       afterSignature,
       timeoutMs
     });
-    
+
     const seen = new Set<string>();
     let txsInspected = 0;
     let before: string | undefined = undefined;
@@ -1013,72 +1077,39 @@ export class ArciumService {
           addr, opts, commitment as any
         );
 
-        if (!sigs.length) { 
-          await this.backoffWithJitter(this.POLL_SLEEP_MS); 
-          continue; 
+        if (!sigs.length) {
+          await this.backoffWithJitter(this.POLL_SLEEP_MS);
+          continue;
         }
 
-        // Process newest→oldest
         for (const s of sigs) {
-          // If already seen, skip
-          if (seen.has(s.signature)) {
-            continue;
-          }
-
-          // Mark as seen
+          if (seen.has(s.signature)) continue;
           seen.add(s.signature);
           txsInspected++;
 
-          const tx = await this.provider.connection.getTransaction(s.signature, { 
-            maxSupportedTransactionVersion: 0, 
-            commitment 
+          const tx = await this.provider.connection.getTransaction(s.signature, {
+            maxSupportedTransactionVersion: 0,
+            commitment
           });
-          
           if (!tx?.transaction?.message) continue;
 
-          // Log any "reseal_dek_callback: entry" appearances
-          if (tx.meta?.logMessages) {
-            for (const logLine of tx.meta.logMessages) {
-              if (logLine.includes('reseal_dek_callback: entry')) {
-                this.logger.log({ 
-                  msg: 'reseal.callback.entry.log', 
-                  sig: s.signature,
-                  programId: programId.toBase58()
-                });
-              }
-              if (logLine.includes('reseal_dek_callback: verified arcium caller')) {
-                this.logger.log({ 
-                  msg: 'reseal.callback.verified.log', 
-                  sig: s.signature 
-                });
-              }
-              if (logLine.includes('reseal_dek_callback: emitting ResealOutput event')) {
-                this.logger.log({ 
-                  msg: 'reseal.callback.emitting.log', 
-                  sig: s.signature 
-                });
-              }
-            }
-          }
-
-          const { ixData, hit } = this.extractCallbackIxData(tx, programId, s.signature);
+          const { ixData, hit } = this.extractIxDataByDiscs(tx, programId, discSet, s.signature);
           if (hit && ixData) {
-            this.logger.log({ 
-              msg: 'reseal.callback.detected', 
-              sig: s.signature, 
+            this.logger.log({
+              msg: 'reseal.callback.detected',
+              sig: s.signature,
               address: addr.toBase58(),
-              txsInspected 
+              txsInspected
             });
             return { sig: s.signature, ixData };
           }
         }
 
-        // Set up for next page
         before = sigs[sigs.length - 1].signature;
         await this.backoffWithJitter(this.POLL_SLEEP_MS);
       } catch (error: any) {
         if (error.message?.includes('429')) {
-          const backoffMs = Math.min(5000, this.POLL_SLEEP_MS * 2); // Cap at 5s
+          const backoffMs = Math.min(5000, this.POLL_SLEEP_MS * 2);
           this.logger.warn({ msg: 'reseal.callback.429.backoff', backoffMs });
           await this.backoffWithJitter(backoffMs);
         } else {
@@ -1087,7 +1118,7 @@ export class ArciumService {
         }
       }
     }
-    
+
     this.logger.warn({
       msg: 'reseal.callback.timeout.debug',
       address: addr.toBase58(),
@@ -1144,29 +1175,17 @@ export class ArciumService {
 
           if (!tx?.meta?.logMessages) continue;
 
-          // Log text probes for debugging (but don't gate parsing)
-          for (const logLine of tx.meta.logMessages) {
-            if (logLine.includes('reseal_dek_callback: verified arcium caller')) {
-              this.logger.log({ msg: 'reseal.callback.verified.log', sig: s.signature });
-            }
-            if (logLine.includes('reseal_dek_callback: emitting ResealOutput event')) {
-              this.logger.log({ msg: 'reseal.callback.emitting.log', sig: s.signature });
-            }
-          }
-
-          // Always create eventParser and parse logs for every transaction
           try {
             const eventParser = new anchor.EventParser(programId, new anchor.BorshCoder(this.program.idl));
             const events = eventParser.parseLogs(tx.meta.logMessages);
-            
+
             for (const event of events) {
               if (event.name === 'ResealOutput') {
                 const ev = event.data as any;
-                
-                // Check if this event matches our listing and record
+
                 const evListingStr = ev.listing?.toBase58?.() || ev.listing?.toString?.();
                 const evRecordStr = ev.record?.toBase58?.() || ev.record?.toString?.();
-                
+
                 if (evListingStr === listingState.toBase58() && evRecordStr === purchaseRecord.toBase58()) {
                   this.logger.log({
                     msg: 'reseal.event.found',
@@ -1179,17 +1198,15 @@ export class ArciumService {
               }
             }
           } catch (parseError) {
-            // Skip non-parseable logs but continue processing
-            this.logger.debug({ msg: 'reseal.event.parse.error', sig: s.signature, error: parseError.message });
+            this.logger.debug({ msg: 'reseal.event.parse.error', sig: s.signature, error: (parseError as any).message });
             continue;
           }
         }
 
-        // Set up for next page
         before = sigs[sigs.length - 1].signature;
         await this.backoffWithJitter(this.POLL_SLEEP_MS);
       } catch (error) {
-        this.logger.warn({ msg: 'reseal.event.scan.error', error: error.message });
+        this.logger.warn({ msg: 'reseal.event.scan.error', error: (error as any).message });
         await this.backoffWithJitter(this.POLL_SLEEP_MS);
       }
     }
@@ -1207,6 +1224,7 @@ export class ArciumService {
   }): Promise<{ signature: string; buyerCid: string } | null> {
     const { programId, listing, record, commitment } = params;
     let resolved = false;
+    const discSet = this.getCallbackDiscSet();
 
     const handleProgramLogs = async (l: any) => {
       if (resolved) return;
@@ -1217,39 +1235,11 @@ export class ArciumService {
         });
         if (!tx) return;
 
-        const msg: any = tx.transaction.message;
-        const isV0 = 'compiledInstructions' in msg;
-        const topCount = isV0 ? msg.compiledInstructions?.length ?? 0 : msg.instructions?.length ?? 0;
-        const innerCount = tx.meta?.innerInstructions?.reduce((a: number, g: any) => a + g.instructions.length, 0) ?? 0;
-
-        this.logger.debug({
-          msg: 'reseal.callback.inspect',
-          sig: l.signature,
-          isV0,
-          nTop: topCount,
-          nInner: innerCount,
-        });
-
-        // Program-ID probe
-        const keys = this.allKeysFromTx(tx); // PublicKey[]
-        const programs = new Set<string>();
-        const topArr = isV0 ? (msg.compiledInstructions ?? []) : (msg.instructions ?? []);
-        for (const ix of topArr) programs.add(keys[ix.programIdIndex].toBase58());
-        for (const g of (tx.meta?.innerInstructions ?? [])) {
-          for (const ix of (g.instructions ?? [])) programs.add(keys[ix.programIdIndex].toBase58());
-        }
-        this.logger.debug({ msg: 'reseal.callback.programs', sig: l.signature, programs: [...programs] });
-
-        const hasApp = programs.has(programId.toBase58());
-        const hasArcium = programs.has(getArciumProgAddress().toBase58());
-        this.logger.debug({ msg: 'reseal.callback.program_presence', hasApp, hasArcium });
-
-        // Account-key probe
+        const keys = this.allKeysFromTx(tx);
         const listingSeen = keys.some(k => k.equals(listing));
         const recordSeen  = keys.some(k => k.equals(record));
-        this.logger.debug({ msg: 'reseal.callback.keys', listingSeen, recordSeen });
 
-        // 1) Strongest signal: parse the ResealOutput event and match listing/record
+        // 1) Prefer event path if present
         try {
           const logs = tx.meta?.logMessages ?? [];
           const eventParser = new anchor.EventParser(programId, new anchor.BorshCoder(this.program.idl));
@@ -1259,13 +1249,24 @@ export class ArciumService {
               const evListing = data.listing?.toBase58?.() || data.listing?.toString?.();
               const evRecord  = data.record?.toBase58?.()  || data.record?.toString?.();
               if (evListing === listing.toBase58() && evRecord === record.toBase58()) {
-                const capsule = Buffer.concat([
-                  Buffer.from(data.c0), Buffer.from(data.c1),
-                  Buffer.from(data.c2), Buffer.from(data.c3),
-                  Buffer.from(data.nonce),
-                ]);
-                if (capsule.length !== 144) return null;
-                const buyerCid = await this.walrus.uploadData(capsule);
+                const c0 = Buffer.from(data.c0);
+                const c1 = Buffer.from(data.c1);
+                const c2 = Buffer.from(data.c2);
+                const c3 = Buffer.from(data.c3);
+                const nonce = Buffer.from(data.nonce);
+                const limbs = Buffer.concat([c0, c1, c2, c3]);
+                const ciphertext32 = limbs.slice(0, 32);
+                const tag16 = limbs.slice(32, 48);
+                const iv12 = this.iv12FromNonceLE(nonce);
+                const arc1Capsule = packArc1Capsule({
+                  senderEphemeral32: new Uint8Array(data.encryption_key || Buffer.alloc(32)),
+                  iv12,
+                  ciphertext32: new Uint8Array(ciphertext32),
+                  tag16: new Uint8Array(tag16),
+                });
+
+                await this.writeBuyerCapsuleDebug(Buffer.from(arc1Capsule), '_watch_event');
+                const buyerCid = await this.walrus.uploadData(Buffer.from(arc1Capsule));
                 await this.solana.finalizePurchaseOnChain({ listing, record, dekCapsuleForBuyerCid: buyerCid });
                 this.logger.log({ msg: 'reseal.callback.finalized.event', signature: l.signature, buyerCid });
                 resolved = true;
@@ -1275,12 +1276,14 @@ export class ArciumService {
           }
         } catch { /* ignore parse errors; fall back to ix */ }
 
-        // 2) Fallback: only decode ix when both listing & record appear in the tx
+        // 2) Fallback: decode ix when both listing & record appear in the tx
         if (!(listingSeen && recordSeen)) return;
-        const { ixData, hit } = this.extractCallbackIxData(tx, programId, l.signature);
+        const { ixData, hit } = this.extractIxDataByDiscs(tx, programId, discSet, l.signature);
         if (!hit || !ixData) return;
 
         const decoded = this.decodeResealCallback(ixData);
+
+        await this.writeBuyerCapsuleDebug(decoded.buyerCapsule, '_watch_ix');
         const buyerCid = await this.walrus.uploadData(decoded.buyerCapsule);
         await this.solana.finalizePurchaseOnChain({ listing, record, dekCapsuleForBuyerCid: buyerCid });
         this.logger.log({ msg: 'reseal.callback.finalized.ix', signature: l.signature, buyerCid });
@@ -1293,7 +1296,6 @@ export class ArciumService {
     };
 
     return new Promise(async (resolve) => {
-      // Main onLogs subscription
       const subId = await this.provider.connection.onLogs(programId, async (l) => {
         const result = await handleProgramLogs(l);
         if (result) {
@@ -1301,7 +1303,7 @@ export class ArciumService {
           try { await this.provider.connection.removeOnLogsListener(subId); } catch {}
           resolve(result);
         }
-      }, 'processed'); // Use 'processed' for snappier callbacks
+      }, 'processed');
 
       this.logger.debug({ msg: 'reseal.websocket.subscribed', subId });
 
@@ -1316,7 +1318,7 @@ export class ArciumService {
   }
 
   // ---------------------------------------------------------------------------
-  // Task 3: Polling with clear states and event listening
+  // Legacy polling fallback (unchanged except logs)
   // ---------------------------------------------------------------------------
 
   private async pollResealCompletion(params: {
@@ -1330,30 +1332,27 @@ export class ArciumService {
     commitment?: anchor.web3.Commitment;
   }): Promise<string> {
     const { mempoolAccount, computationAccount, jobPda, arciumProgram, sig, listingState, purchaseRecord } = params;
-    
+
     this.logger.debug({ msg:'reseal.poll.start', jobPda: jobPda.toBase58(), tx: sig });
 
     let resealEventFound = false;
     let buyerCid: string | null = null;
     const programId = this.getAppProgramId();
 
-    // Subscribe for the callback and parse the event
     const logsSubscription = this.provider.connection.onLogs(
       programId,
       (logs, context) => {
         try {
-          // Parse logs for ResealOutput event
           const eventParser = new anchor.EventParser(programId, new anchor.BorshCoder(this.program.idl));
           const events = eventParser.parseLogs(logs.logs);
-          
+
           for (const event of events) {
             if (event.name === 'ResealOutput') {
               const ev = event.data as any;
-              
-              // Check if this event matches our listing and record
+
               const evListingStr = ev.listing?.toBase58?.() || ev.listing?.toString?.();
               const evRecordStr = ev.record?.toBase58?.() || ev.record?.toString?.();
-              
+
               if (evListingStr === listingState.toBase58() && evRecordStr === purchaseRecord.toBase58()) {
                 this.logger.log({
                   msg: 'reseal.event',
@@ -1366,31 +1365,37 @@ export class ArciumService {
                   c2Hex: ev.c2 ? Buffer.from(ev.c2).subarray(0,4).toString('hex') : 'missing',
                   c3Hex: ev.c3 ? Buffer.from(ev.c3).subarray(0,4).toString('hex') : 'missing',
                 });
-                
-                // Build the 144-byte buyer capsule buffer
-                // Layout: [c0, c1, c2, c3, nonce] (128 + 16) to match decryptor expectations
+
                 const c0 = Buffer.from(ev.c0);
                 const c1 = Buffer.from(ev.c1);
                 const c2 = Buffer.from(ev.c2);
                 const c3 = Buffer.from(ev.c3);
                 const nonce = Buffer.from(ev.nonce);
-                
-                const capsule = Buffer.concat([c0, c1, c2, c3, nonce]);
-                
-                if (capsule.length !== 144) {
-                  throw new Error('buyer_capsule.bad_length');
-                }
-                
-                // Upload capsule to Walrus (encoded raw)
-                this.walrus.uploadData(capsule).then(blobId => {
-                  this.logger.log({ msg:'reseal.upload', blobId, bytes: capsule.length });
-                  
-                  // Call finalize_purchase
+                const limbs = Buffer.concat([c0, c1, c2, c3]);
+                const ciphertext32 = limbs.slice(0, 32);
+                const tag16 = limbs.slice(32, 48);
+                const iv12 = this.iv12FromNonceLE(nonce);
+
+                const arc1Capsule = packArc1Capsule({
+                  senderEphemeral32: new Uint8Array(ev.encryption_key || Buffer.alloc(32)),
+                  iv12,
+                  ciphertext32: new Uint8Array(ciphertext32),
+                  tag16: new Uint8Array(tag16),
+                });
+
+                this.writeBuyerCapsuleDebug(Buffer.from(arc1Capsule), '_poll').then(() => {
+                  return this.walrus.uploadData(Buffer.from(arc1Capsule));
+                }).then(blobId => {
+                  this.logger.log({
+                    msg:'reseal.upload',
+                    blobId,
+                    arc1_length: arc1Capsule.length,
+                    via: 'poll_path',
+                  });
+
                   return this.finalizePurchase(listingState, purchaseRecord, blobId);
                 }).then(txSig => {
                   this.logger.log({ msg:'finalize_purchase.ok', tx: txSig });
-                  
-                  // Post-finalize verification
                   return this.solana.getPurchaseRecordBuyerCid(purchaseRecord);
                 }).then(verifiedBuyerCid => {
                   this.logger.log({ msg:'purchase_record.updated', buyerCid: verifiedBuyerCid });
@@ -1398,9 +1403,8 @@ export class ArciumService {
                   resealEventFound = true;
                 }).catch(e => {
                   this.logger.error('Failed to finalize purchase after reseal event:', e);
-                  // Don't rethrow to avoid unhandled rejection crash
                 });
-                
+
                 break;
               }
             }
@@ -1413,51 +1417,39 @@ export class ArciumService {
     );
 
     try {
-      // Poll for 60 seconds with 2s intervals (30 iterations)  
       for (let i = 0; i < 30 && !resealEventFound; i++) {
-        try {
-          // Log polling tick
-          this.logger.debug({
-            msg: 'reseal.poll.tick',
-            i,
-            jobPda: jobPda.toBase58(),
-            eventFound: resealEventFound,
-          });
+        this.logger.debug({
+          msg: 'reseal.poll.tick',
+          i,
+          jobPda: jobPda.toBase58(),
+          eventFound: resealEventFound,
+        });
 
-          // Check transaction logs periodically
-          if (i > 0 && i % 5 === 0) { // Every 10 seconds
-            try {
-              const txInfo = await this.provider.connection.getTransaction(sig, {
-                maxSupportedTransactionVersion: 0,
-                commitment: 'confirmed'
+        if (i > 0 && i % 5 === 0) {
+          try {
+            const txInfo = await this.provider.connection.getTransaction(sig, {
+              maxSupportedTransactionVersion: 0,
+              commitment: 'confirmed'
+            });
+
+            if (txInfo?.meta?.logMessages) {
+              const hasCallbackLogs = txInfo.meta.logMessages.some(log =>
+                log.includes('reseal_dek_callback') || (log.includes('invoke') && log.includes(arciumProgram.toBase58()))
+              );
+
+              this.logger.debug({
+                msg: 'reseal.poll.tx_logs',
+                i,
+                hasCallbackLogs,
+                logCount: txInfo.meta.logMessages.length,
               });
-              
-              if (txInfo?.meta?.logMessages) {
-                const hasCallbackLogs = txInfo.meta.logMessages.some(log => 
-                  log.includes('reseal_dek_callback') || log.includes('invoke') && log.includes(arciumProgram.toBase58())
-                );
-                
-                this.logger.debug({
-                  msg: 'reseal.poll.tx_logs',
-                  i,
-                  hasCallbackLogs,
-                  logCount: txInfo.meta.logMessages.length,
-                });
-              }
-            } catch (e) {
-              this.logger.debug('Failed to fetch transaction logs during polling:', e);
             }
+          } catch (e) {
+            this.logger.debug('Failed to fetch transaction logs during polling:', e);
           }
-
-          await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
-        } catch (e) {
-          this.logger.debug({
-            msg: 'reseal.poll.error',
-            i,
-            error: e.message,
-          });
-          await new Promise(resolve => setTimeout(resolve, 2000));
         }
+
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
 
       if (!resealEventFound || !buyerCid) {
@@ -1468,7 +1460,6 @@ export class ArciumService {
       return buyerCid;
 
     } finally {
-      // Clean up logs subscription
       try {
         await this.provider.connection.removeOnLogsListener(logsSubscription);
       } catch (e) {
@@ -1479,7 +1470,7 @@ export class ArciumService {
 
   private async finalizePurchase(listingState: PublicKey, purchaseRecord: PublicKey, dekCapsuleForBuyerCid: string): Promise<string> {
     this.logger.log({ msg:'finalize_purchase.submit', cid: dekCapsuleForBuyerCid });
-    
+
     const admin = this.provider.wallet.publicKey;
     const [marketplacePda] = PublicKey.findProgramAddressSync(
       [Buffer.from('marketplace'), admin.toBuffer()],
@@ -1565,13 +1556,17 @@ export class ArciumService {
     for (const ix of top) {
       const pid = keys[ix.programIdIndex];
       const bytes = this.decodeIxDataString(ix.data);
-      this.logger.debug({ msg:'debug.top.ix', i: i++, pid: pid.toBase58(), len: bytes.length, head8: bytes.subarray(0,8).toString('hex') });
+      const head8 = bytes.subarray(0,8).toString('hex');
+      const name = this.discHexToName(head8);
+      this.logger.debug({ msg:'debug.top.ix', i: i++, pid: pid.toBase58(), len: bytes.length, head8, name: name || '(unknown)' });
     }
     for (const g of inner) {
       for (const ix of (g.instructions ?? [])) {
         const pid = keys[ix.programIdIndex];
         const bytes = this.decodeIxDataString(ix.data);
-        this.logger.debug({ msg:'debug.inner.ix', pid: pid.toBase58(), len: bytes.length, head8: bytes.subarray(0,8).toString('hex') });
+        const head8 = bytes.subarray(0,8).toString('hex');
+        const name = this.discHexToName(head8);
+        this.logger.debug({ msg:'debug.inner.ix', pid: pid.toBase58(), len: bytes.length, head8, name: name || '(unknown)' });
       }
     }
   }

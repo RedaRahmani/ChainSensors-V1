@@ -4,6 +4,7 @@ import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import * as dns from 'dns';
 import * as https from 'https';
 import { logKV } from '../common/trace';
+import PQueue from 'p-queue';
 
 @Injectable()
 export class WalrusService {
@@ -15,6 +16,9 @@ export class WalrusService {
   private readonly deletable: boolean;
 
   private readonly http: AxiosInstance;
+
+  // Upload queue with concurrency limit to prevent rate limiting
+  private readonly uploadQueue = new PQueue({ concurrency: 2 });
 
   constructor(private readonly config: ConfigService) {
     try { dns.setDefaultResultOrder('ipv4first'); } catch {}
@@ -43,7 +47,7 @@ export class WalrusService {
       validateStatus: (s) => s >= 200 && s < 300,
     });
     this.logger.log(
-      `WalrusService ready. publisher=${this.publisherUrl} aggregator=${this.aggregatorUrl} epochs=${this.defaultEpochs} deletable=${this.deletable}`,
+      `WalrusService ready. publisher=${this.publisherUrl} aggregator=${this.aggregatorUrl} epochs=${this.defaultEpochs} deletable=${this.deletable} queueConcurrency=${this.uploadQueue.concurrency}`,
     );
   }
 
@@ -130,10 +134,42 @@ export class WalrusService {
     }
   }
 
+  /**
+   * Rate-limited wrapper for putBlob that respects 429s and implements exponential backoff
+   */
+  private async putBlobWithRetry(data: Buffer, epochs?: number): Promise<string> {
+    return this.uploadQueue.add(async (): Promise<string> => {
+      let delay = 250; // Start with 250ms delay
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await this.putBlob(data, epochs);
+        } catch (e: any) {
+          const status = e?.response?.status ?? e?.status;
+          const retryAfter = Number(e?.response?.headers?.['retry-after']);
+          
+          // Only retry on 429 (rate limit) errors
+          if (status !== 429) {
+            throw e; // Re-throw non-rate-limit errors immediately
+          }
+          
+          // Calculate sleep time: use Retry-After header if present, otherwise exponential backoff
+          const sleepMs = Number.isFinite(retryAfter) ? retryAfter * 1000 : delay;
+          
+          this.logger.warn(`Walrus rate limited (429), retrying in ${sleepMs}ms (attempt ${attempt + 1})`);
+          
+          await new Promise(resolve => setTimeout(resolve, sleepMs));
+          
+          // Increase delay for next attempt (exponential backoff with jitter)
+          delay = Math.min(delay * 2 + Math.random() * 100, 4000); // Cap at 4s with jitter
+        }
+      }
+    }) as Promise<string>;
+  }
+
   async uploadMetadata(metadata: Record<string, any>): Promise<string> {
     this.logger.debug('uploadMetadata called');
     const payload = Buffer.from(JSON.stringify(metadata), 'utf-8');
-    return this.putBlob(payload);
+    return this.putBlobWithRetry(payload);
   }
 
   async uploadData(data: any): Promise<string> {
@@ -142,7 +178,7 @@ export class WalrusService {
     if (Buffer.isBuffer(data)) payload = data;
     else if (typeof data === 'string') payload = Buffer.from(data, 'utf-8');
     else payload = Buffer.from(JSON.stringify(data), 'utf-8');
-    return this.putBlob(payload);
+    return this.putBlobWithRetry(payload);
   }
 
   /**
@@ -259,6 +295,6 @@ export class WalrusService {
   }
 
   async putCapsule(bytes: Buffer): Promise<string> {
-    return this.putBlob(bytes);
+    return this.putBlobWithRetry(bytes);
   }
 }

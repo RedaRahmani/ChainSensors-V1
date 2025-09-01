@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use arcium_anchor::prelude::*;
 use arcium_macros::{
     arcium_callback, arcium_program,
-    // we also need these macros for account contexts:
+    // also need these macros for account contexts:
     init_computation_definition_accounts,
     queue_computation_accounts,
     callback_accounts,
@@ -115,7 +115,13 @@ pub mod chain_sensors {
         buyer_x25519_pubkey: [u8; 32],
         purchase_index: u64,
     ) -> Result<()> {
-        instructions::purchase_listing::handler(ctx, listing_id, units_requested, buyer_x25519_pubkey, purchase_index)
+        instructions::purchase_listing::handler(
+            ctx,
+            listing_id,
+            units_requested,
+            buyer_x25519_pubkey,
+            purchase_index,
+        )
     }
 
     pub fn finalize_purchase(
@@ -134,13 +140,9 @@ pub mod chain_sensors {
     }
 
     pub fn init_accuracy_score_comp_def(ctx: Context<InitAccuracyScoreCompDef>) -> Result<()> {
-        init_comp_def(
-            ctx.accounts,
-            true,
-            0,
-            None,
-            None
-        )?;
+        // Ensure the corresponding *_testnet.arcis exists in build/ or comment
+        // this out until you have the artifact available.
+        init_comp_def(ctx.accounts, true, 0, None, None)?;
         Ok(())
     }
 
@@ -191,9 +193,9 @@ pub mod chain_sensors {
         Ok(())
     }
 
-
     pub fn init_reseal_dek_comp_def(ctx: Context<InitResealDekCompDef>) -> Result<()> {
-
+        // This init uses OffChain source for the comp-def metadata, but the
+        // compile-time macros still require a local build/*.arcis file.
         init_comp_def(
             ctx.accounts,
             false,
@@ -217,7 +219,6 @@ pub mod chain_sensors {
         c2: [u8; 32],
         c3: [u8; 32],
     ) -> Result<()> {
-
         instructions::reseal_dek::handler(
             ctx,
             computation_offset,
@@ -234,27 +235,27 @@ pub mod chain_sensors {
         ctx: Context<ResealDekCallback>,
         output: ComputationOutputs<ResealDekOutput>,
     ) -> Result<()> {
-        anchor_lang::prelude::msg!("reseal_dek_callback: entry");
-        // Ensure this callback is being executed from the Arcium program's instruction.
-        // (Arcium invokes us via CPI from its top-level tx instruction; the "current" instruction
-        // in the Instructions sysvar is the Arcium program id.)
+        msg!("reseal_dek_callback: entry");
+
+        // Verify this was invoked by the Arcium program (top-level).
         assert_called_by_arcium(
             &ctx.accounts.instructions_sysvar,
             &ctx.accounts.arcium_program.key(),
         )?;
-        anchor_lang::prelude::msg!("reseal_dek_callback: verified arcium caller");
+        msg!("reseal_dek_callback: verified arcium caller");
+
         let o = match output {
             ComputationOutputs::Success(ResealDekOutput { field_0 }) => field_0,
             _ => return Err(ErrorCode::AbortedComputation.into()),
         };
 
-        // Emit the structured ARC1 capsule components (not a Vec<u8>).
-        anchor_lang::prelude::msg!("reseal_dek_callback: emitting ResealOutput event");
+        // Emit the structured ARC1 capsule components (anchor event).
+        msg!("reseal_dek_callback: emitting ResealOutput event");
         emit!(ResealOutput {
             listing: ctx.accounts.listing_state.key(),
             record:  ctx.accounts.purchase_record.key(),
             encryption_key: o.encryption_key,
-            nonce: o.nonce.to_le_bytes(),
+            nonce: o.nonce.to_le_bytes(),   // little-endian
             c0: o.ciphertexts[0],
             c1: o.ciphertexts[1],
             c2: o.ciphertexts[2],
@@ -264,7 +265,6 @@ pub mod chain_sensors {
         Ok(())
     }
 }
-
 
 #[event]
 pub struct QualityScoreEvent {
@@ -278,7 +278,7 @@ pub struct QualityScoreEvent {
 pub struct ResealOutput {
     pub listing: Pubkey,
     pub record:  Pubkey,
-    pub encryption_key: [u8; 32], // sender ephemeral/public (shared scheme dep)
+    pub encryption_key: [u8; 32], // sender ephemeral/public (scheme-dependent)
     pub nonce: [u8; 16],          // 128-bit nonce/iv (little-endian)
     pub c0: [u8; 32],
     pub c1: [u8; 32],
@@ -335,7 +335,7 @@ pub struct InitResealDekCompDef<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    #[account(mut , address = derive_mxe_pda!())]
+    #[account(mut, address = derive_mxe_pda!())]
     pub mxe_account: Account<'info, MXEAccount>,
 
     #[account(mut)]
@@ -355,27 +355,22 @@ pub struct ResealDek<'info> {
     pub mxe_account: Account<'info, MXEAccount>,
 
     #[account(mut, address = derive_mempool_pda!())]
-
     pub mempool_account: UncheckedAccount<'info>,
 
     #[account(mut, address = derive_execpool_pda!())]
-
     pub executing_pool: UncheckedAccount<'info>,
 
     #[account(mut, address = derive_comp_pda!(computation_offset))]
-
     pub computation_account: UncheckedAccount<'info>,
 
     #[account(address = derive_comp_def_pda!(COMP_DEF_OFFSET_RESEAL_DEK))]
     pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
-
 
     #[account(mut, address = ARCIUM_FEE_POOL_ACCOUNT_ADDRESS)]
     pub pool_account: Account<'info, FeePool>,
 
     #[account(address = ARCIUM_CLOCK_ACCOUNT_ADDRESS)]
     pub clock_account: Account<'info, ClockAccount>,
-
 
     #[account(mut, address = derive_cluster_pda!(mxe_account))]
     pub cluster_account: Account<'info, Cluster>,

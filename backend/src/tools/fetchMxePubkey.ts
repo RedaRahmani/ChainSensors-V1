@@ -32,7 +32,20 @@ async function main() {
     throw new Error('MXE x25519 public key is unset for this MXE account.');
   }
 
-  const b64 = Buffer.from(mxeInfo.x25519Pubkey.set).toString('base64');
+  // Handle the case where set might be an array-like object with numeric properties
+  const setData = mxeInfo.x25519Pubkey.set as any;
+  let pubkeyBytes: number[];
+  
+  if (Array.isArray(setData)) {
+    pubkeyBytes = setData;
+  } else if (setData && typeof setData === 'object' && '0' in setData) {
+    // Convert object with numeric keys to array
+    pubkeyBytes = Object.values(setData).flat() as number[];
+  } else {
+    pubkeyBytes = Array.from(setData as Uint8Array);
+  }
+  
+  const b64 = Buffer.from(pubkeyBytes).toString('base64');
   console.log('MXE_X25519_PUBKEY_BASE64=', b64);
 }
 
