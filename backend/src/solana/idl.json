@@ -231,6 +231,12 @@
           }
         },
         {
+          "name": "device"
+        },
+        {
+          "name": "listing_state"
+        },
+        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         },
@@ -346,6 +352,36 @@
         {
           "name": "instructions_sysvar",
           "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "device"
+        },
+        {
+          "name": "listing_state"
+        },
+        {
+          "name": "dq_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  113,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "device"
+              }
+            ]
+          }
         }
       ],
       "args": [
@@ -626,6 +662,105 @@
       "args": []
     },
     {
+      "name": "init_dq_for_device",
+      "discriminator": [
+        126,
+        248,
+        176,
+        229,
+        220,
+        222,
+        98,
+        32
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "device"
+        },
+        {
+          "name": "dq_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  113,
+                  99,
+                  102,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "device"
+              }
+            ]
+          }
+        },
+        {
+          "name": "dq_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  113,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "device"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "expected_rate_hz",
+          "type": "u32"
+        },
+        {
+          "name": "stale_threshold_ms",
+          "type": "u32"
+        },
+        {
+          "name": "var_hi_q16_16",
+          "type": "u32"
+        },
+        {
+          "name": "var_lo_q16_16",
+          "type": "u32"
+        },
+        {
+          "name": "eps_q16_16",
+          "type": "u32"
+        }
+      ]
+    },
+    {
       "name": "init_reseal_dek_comp_def",
       "discriminator": [
         5,
@@ -868,6 +1003,143 @@
         {
           "name": "fee",
           "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "publish_quality_metrics",
+      "discriminator": [
+        38,
+        52,
+        226,
+        40,
+        50,
+        42,
+        71,
+        248
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "device"
+        },
+        {
+          "name": "listing"
+        },
+        {
+          "name": "dq_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  113,
+                  99,
+                  102,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "device"
+              }
+            ]
+          }
+        },
+        {
+          "name": "dq_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  113,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "device"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "dq_config"
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "window_start",
+          "type": "i64"
+        },
+        {
+          "name": "window_end",
+          "type": "i64"
+        },
+        {
+          "name": "field_completeness_bps",
+          "type": "u16"
+        },
+        {
+          "name": "packet_completeness_bps",
+          "type": "u16"
+        },
+        {
+          "name": "stale_ratio_bps",
+          "type": "u16"
+        },
+        {
+          "name": "delay_p50_ms",
+          "type": "u32"
+        },
+        {
+          "name": "delay_p90_ms",
+          "type": "u32"
+        },
+        {
+          "name": "delay_p99_ms",
+          "type": "u32"
+        },
+        {
+          "name": "rolling_var_q16_16",
+          "type": "u32"
+        },
+        {
+          "name": "flags",
+          "type": "u8"
+        },
+        {
+          "name": "accuracy_score_opt",
+          "type": {
+            "option": "u8"
+          }
+        },
+        {
+          "name": "quality_score_bps_opt",
+          "type": {
+            "option": "u16"
+          }
         }
       ]
     },
@@ -1373,10 +1645,7 @@
           "address": "Sysvar1nstructions1111111111111111111111111"
         },
         {
-          "name": "listing_state",
-          "docs": [
-            "Extra callback accounts (order must match what you queued)"
-          ]
+          "name": "listing_state"
         },
         {
           "name": "purchase_record"
@@ -1524,6 +1793,32 @@
       ]
     },
     {
+      "name": "DqConfig",
+      "discriminator": [
+        223,
+        180,
+        128,
+        108,
+        124,
+        197,
+        62,
+        101
+      ]
+    },
+    {
+      "name": "DqState",
+      "discriminator": [
+        218,
+        32,
+        159,
+        127,
+        153,
+        115,
+        68,
+        50
+      ]
+    },
+    {
       "name": "FeePool",
       "discriminator": [
         172,
@@ -1603,6 +1898,19 @@
     }
   ],
   "events": [
+    {
+      "name": "DataQualityEvent",
+      "discriminator": [
+        76,
+        113,
+        78,
+        19,
+        94,
+        25,
+        93,
+        8
+      ]
+    },
     {
       "name": "ListingPurchased",
       "discriminator": [
@@ -1999,12 +2307,94 @@
     },
     {
       "name": "ComputeAccuracyScoreOutput",
+      "docs": [
+        "The output of the callback instruction. Provided as a struct with ordered fields",
+        "as anchor does not support tuples and tuple structs yet."
+      ],
       "type": {
         "kind": "struct",
         "fields": [
           {
             "name": "field_0",
-            "type": "bytes"
+            "type": {
+              "defined": {
+                "name": "SharedEncryptedStruct",
+                "generics": [
+                  {
+                    "kind": "const",
+                    "value": "1"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "DataQualityEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "device",
+            "type": "pubkey"
+          },
+          {
+            "name": "listing",
+            "type": "pubkey"
+          },
+          {
+            "name": "window_start",
+            "type": "i64"
+          },
+          {
+            "name": "window_end",
+            "type": "i64"
+          },
+          {
+            "name": "field_completeness_bps",
+            "type": "u16"
+          },
+          {
+            "name": "packet_completeness_bps",
+            "type": "u16"
+          },
+          {
+            "name": "stale_ratio_bps",
+            "type": "u16"
+          },
+          {
+            "name": "delay_p50_ms",
+            "type": "u32"
+          },
+          {
+            "name": "delay_p90_ms",
+            "type": "u32"
+          },
+          {
+            "name": "delay_p99_ms",
+            "type": "u32"
+          },
+          {
+            "name": "rolling_var_q16_16",
+            "type": "u32"
+          },
+          {
+            "name": "flags",
+            "type": "u8"
+          },
+          {
+            "name": "accuracy_score_opt",
+            "type": {
+              "option": "u8"
+            }
+          },
+          {
+            "name": "quality_score_bps_opt",
+            "type": {
+              "option": "u16"
+            }
           }
         ]
       }
@@ -2097,6 +2487,122 @@
           {
             "name": "is_verified",
             "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DqConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "device",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "expected_rate_hz",
+            "type": "u32"
+          },
+          {
+            "name": "stale_threshold_ms",
+            "type": "u32"
+          },
+          {
+            "name": "var_hi_q16_16",
+            "type": "u32"
+          },
+          {
+            "name": "var_lo_q16_16",
+            "type": "u32"
+          },
+          {
+            "name": "eps_q16_16",
+            "type": "u32"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "DqState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "device",
+            "type": "pubkey"
+          },
+          {
+            "name": "last_window_start",
+            "type": "i64"
+          },
+          {
+            "name": "last_window_end",
+            "type": "i64"
+          },
+          {
+            "name": "last_quality_bps",
+            "type": "u16"
+          },
+          {
+            "name": "last_accuracy_u8",
+            "type": "u8"
+          },
+          {
+            "name": "window_count",
+            "type": "u64"
+          },
+          {
+            "name": "last_updated_ts",
+            "type": "i64"
+          },
+          {
+            "name": "last_acc_ciphertext_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "last_acc_nonce_le",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
           }
         ]
       }

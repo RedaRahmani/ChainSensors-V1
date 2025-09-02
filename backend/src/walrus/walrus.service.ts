@@ -5,6 +5,7 @@ import * as dns from 'dns';
 import * as https from 'https';
 import { logKV } from '../common/trace';
 import PQueue from 'p-queue';
+import { walrusMetrics } from '../metrics/metrics.module';
 
 @Injectable()
 export class WalrusService {
@@ -54,7 +55,6 @@ export class WalrusService {
   /** Base64 -> base64url (Walrus prefers url-safe, no padding). */
   private toBase64Url(id: string): string {
     let t = String(id).trim().replace(/\s+/g, '');
-    // if it came percent-encoded, decode first (best-effort)
     try { t = decodeURIComponent(t); } catch {}
     t = t.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
     return t;
@@ -82,6 +82,7 @@ export class WalrusService {
     if (this.deletable) query.set('deletable', 'true');
     const url = `${this.publisherUrl.replace(/\/$/, '')}/v1/blobs?${query.toString()}`;
 
+    const timer = walrusMetrics.putDuration.startTimer();
     try {
       this.logger.debug(`PUT ${url}`);
       const res = await this.http.put(url, data, {
@@ -97,6 +98,7 @@ export class WalrusService {
 
       if (!blobId) {
         this.logger.error(`Unexpected Walrus response: ${JSON.stringify(body).slice(0, 400)}`);
+        walrusMetrics.putTotal.inc({ status: 'error' });
         throw new Error('Walrus did not return a blobId');
       }
 
@@ -107,6 +109,7 @@ export class WalrusService {
         hasEq: String(blobId).includes('='),
       });
 
+      walrusMetrics.putTotal.inc({ status: 'ok' });
       return String(blobId);
     } catch (err: any) {
       const status = err?.response?.status;
@@ -121,16 +124,17 @@ export class WalrusService {
       );
       if (bodySnippet) this.logger.error(`Walrus error body: ${bodySnippet}`);
 
-      throw new Error(
-        JSON.stringify({
-          where: 'publisher',
-          status: status ?? null,
-          statusText: statusText ?? null,
-          code: code ?? null,
-          message: err?.message ?? 'upload failed',
-          body: bodySnippet ?? null,
-        }),
-      );
+      // Record metrics
+      if (status === 429) {
+        walrusMetrics.putTotal.inc({ status: 'rate_limited' });
+      } else {
+        walrusMetrics.putTotal.inc({ status: 'error' });
+      }
+
+      // IMPORTANT: rethrow the original Axios error so the caller can see response.status
+      throw err;
+    } finally {
+      timer();
     }
   }
 
@@ -145,22 +149,21 @@ export class WalrusService {
           return await this.putBlob(data, epochs);
         } catch (e: any) {
           const status = e?.response?.status ?? e?.status;
-          const retryAfter = Number(e?.response?.headers?.['retry-after']);
-          
+
           // Only retry on 429 (rate limit) errors
           if (status !== 429) {
             throw e; // Re-throw non-rate-limit errors immediately
           }
-          
-          // Calculate sleep time: use Retry-After header if present, otherwise exponential backoff
+
+          const retryAfter = Number(e?.response?.headers?.['retry-after']);
           const sleepMs = Number.isFinite(retryAfter) ? retryAfter * 1000 : delay;
-          
+
           this.logger.warn(`Walrus rate limited (429), retrying in ${sleepMs}ms (attempt ${attempt + 1})`);
-          
+
           await new Promise(resolve => setTimeout(resolve, sleepMs));
-          
-          // Increase delay for next attempt (exponential backoff with jitter)
-          delay = Math.min(delay * 2 + Math.random() * 100, 4000); // Cap at 4s with jitter
+
+          // Exponential backoff with jitter (cap at 4s)
+          delay = Math.min(delay * 2 + Math.random() * 100, 4000);
         }
       }
     }) as Promise<string>;
@@ -187,12 +190,16 @@ export class WalrusService {
   async fetchFile(blobId: string): Promise<Buffer> {
     const encoded = encodeURIComponent(blobId);
     const url = this.buildAggUrl(encoded);
+    const timer = walrusMetrics.getDuration.startTimer();
+
     try {
       this.logger.debug(`GET ${url}`);
       const res = await this.http.get(url, {
         responseType: 'arraybuffer',
         lookup: (hostname, _opts, cb) => dns.lookup(hostname, { family: 4, all: false }, cb),
       } as AxiosRequestConfig & { lookup: any });
+
+      walrusMetrics.getTotal.inc({ status: 'ok' });
       return Buffer.from(res.data);
     } catch (err: any) {
       const status = err?.response?.status;
@@ -200,7 +207,11 @@ export class WalrusService {
       this.logger.error(
         `Walrus GET failed for ${blobId} [status=${status ?? '-'} code=${code ?? '-'}]: ${err?.message}`,
       );
+
+      walrusMetrics.getTotal.inc({ status: 'error' });
       throw new Error('Failed to fetch blob from Walrus');
+    } finally {
+      timer();
     }
   }
 
@@ -208,11 +219,11 @@ export class WalrusService {
    * Smart fetch: tries raw-encoded, base64url, and encoded base64url path forms.
    */
   async fetchFileSmart(blobId: string, traceId?: string): Promise<{ bytes: Buffer; used: string }> {
+    const timer = walrusMetrics.getDuration.startTimer();
     const attempts: { note: string; url: string }[] = [];
     const raw = String(blobId).trim();
     const b64u = this.toBase64Url(raw);
 
-    // Auto-normalize if not URL-safe
     if (!this.looksBase64Url(raw)) {
       logKV(this.logger, 'walrus.cid_normalized', {
         traceId,
@@ -227,42 +238,45 @@ export class WalrusService {
 
     let lastErr: any = null;
 
-    for (const a of attempts) {
-      try {
-        this.logger.debug(`GET ${a.url} (${a.note})`);
-        const res = await this.http.get(a.url, {
-          responseType: 'arraybuffer',
-          lookup: (hostname, _opts, cb) => dns.lookup(hostname, { family: 4, all: false }, cb),
-        } as AxiosRequestConfig & { lookup: any });
-        
-        const bytes = Buffer.from(res.data);
-        const contentType = res.headers['content-type'] || 'application/octet-stream';
-        
-        // Add fetch summary log
-        this.logger.debug({
-          msg: 'walrus.fetch',
-          cid: raw.slice(0, 16) + '…',
-          status: res.status,
-          contentType,
-          contentLength: bytes.length,
-        });
-        
-        return { bytes, used: a.note };
-      } catch (err: any) {
-        const status = err?.response?.status;
-        const body = err?.response?.data;
-        const bodySnippet =
-          typeof body === 'string' ? body.slice(0, 200) : JSON.stringify(body)?.slice(0, 200);
-        this.logger.warn(`Walrus GET attempt failed (${a.note}) [status=${status ?? '-'}]: ${err?.message}`);
-        if (bodySnippet) this.logger.warn(`Walrus body: ${bodySnippet}`);
-        lastErr = err;
+    try {
+      for (const a of attempts) {
+        try {
+          this.logger.debug(`GET ${a.url} (${a.note})`);
+          const res = await this.http.get(a.url, {
+            responseType: 'arraybuffer',
+            lookup: (hostname, _opts, cb) => dns.lookup(hostname, { family: 4, all: false }, cb),
+          } as AxiosRequestConfig & { lookup: any });
+
+          const bytes = Buffer.from(res.data);
+          const contentType = res.headers['content-type'] || 'application/octet-stream';
+
+          this.logger.debug({
+            msg: 'walrus.fetch',
+            cid: raw.slice(0, 16) + '…',
+            status: res.status,
+            contentType,
+            contentLength: bytes.length,
+          });
+
+          walrusMetrics.getTotal.inc({ status: 'ok' });
+          return { bytes, used: a.note };
+        } catch (err: any) {
+          const status = err?.response?.status;
+          const body = err?.response?.data;
+          const bodySnippet =
+            typeof body === 'string' ? body.slice(0, 200) : JSON.stringify(body)?.slice(0, 200);
+          this.logger.warn(`Walrus GET attempt failed (${a.note}) [status=${status ?? '-'}]: ${err?.message}`);
+          if (bodySnippet) this.logger.warn(`Walrus body: ${bodySnippet}`);
+          lastErr = err;
+        }
       }
+    } finally {
+      timer();
     }
 
     const status = lastErr?.response?.status;
     const code = lastErr?.code;
-    
-    // Log fetch failure
+
     logKV(this.logger, 'walrus.fetch', {
       traceId,
       cid: raw.substring(0, 10) + '...',
@@ -270,7 +284,7 @@ export class WalrusService {
       contentType: null,
       contentLength: 0,
     }, 'error');
-    
+
     logKV(this.logger, 'walrus.fetch_failed', {
       traceId,
       reason: 'walrus_fetch_failed',
@@ -278,10 +292,32 @@ export class WalrusService {
       attempts: attempts.length,
     }, 'error');
 
+    walrusMetrics.getTotal.inc({ status: 'error' });
     this.logger.error(
       `Walrus GET failed for ${raw} after ${attempts.length} attempts [status=${status ?? '-'} code=${code ?? '-'}]: ${lastErr?.message}`,
     );
     throw new Error('Failed to fetch blob from Walrus');
+  }
+
+  async fetchData(cid: string): Promise<Buffer> {
+    const timer = walrusMetrics.getDuration.startTimer();
+    try {
+      const baseUrl =
+        this.config.get<string>('WALRUS_AGGREGATOR_URL')
+        || this.config.get<string>('WALRUS_URL')
+        || '';
+      if (!baseUrl) throw new Error('WALRUS_URL/WALRUS_AGGREGATOR_URL not configured');
+      const url = `${baseUrl.replace(/\/$/, '')}/v1/blobs/${cid}`;
+      const res = await axios.get(url, { responseType: 'arraybuffer' });
+
+      walrusMetrics.getTotal.inc({ status: 'ok' });
+      return Buffer.from(res.data);
+    } catch (error) {
+      walrusMetrics.getTotal.inc({ status: 'error' });
+      throw error;
+    } finally {
+      timer();
+    }
   }
 
   async getMetadata(blobId: string): Promise<any> {

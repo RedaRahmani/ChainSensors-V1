@@ -19,3 +19,6 @@ pub use update_marketplace::*;
 pub use compute_accuracy::*;
 pub use finalize_purchase::*;
 pub use reseal_dek::*;
+pub mod quality;
+pub use quality::*;
+

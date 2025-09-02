@@ -1,6 +1,8 @@
 export default () => ({
   BROKER_URL: process.env.BROKER_URL,
   SOLANA_RPC: process.env.SOLANA_RPC,
+  SOLANA_HTTP: process.env.SOLANA_HTTP, // NEW: HTTP endpoint for transaction fetching
+  SOLANA_WS: process.env.SOLANA_WS,
   SOLANA_KEYPAIR_JSON: process.env.SOLANA_KEYPAIR_JSON,
   WALRUS_URL: process.env.WALRUS_URL,
   SOLANA_PROGRAM_ID: process.env.SOLANA_PROGRAM_ID,
@@ -25,6 +27,8 @@ export default () => ({
   WALRUS_AGGREGATOR_URL: process.env.WALRUS_AGGREGATOR_URL,
   WALRUS_EPOCHS: process.env.WALRUS_EPOCHS,
   WALRUS_DELETABLE: process.env.WALRUS_DELETABLE,
+  
+  // Arcium configuration
   ARCIUM_MXE_PROGRAM_ID: process.env.ARCIUM_MXE_PROGRAM_ID,
   MXE_X25519_PUBKEY_B64: process.env.MXE_X25519_PUBKEY_B64,
   MINT_AUTHORITY_KEYPAIR_JSON: process.env.MINT_AUTHORITY_KEYPAIR_JSON,
@@ -32,4 +36,17 @@ export default () => ({
   ARCIUM_EXECUTING_POOL_PUBKEY: process.env.ARCIUM_EXECUTING_POOL_PUBKEY,
   ARCIUM_CLOCK_PUBKEY: process.env.ARCIUM_CLOCK_PUBKEY,
   ARCIUM_FEE_POOL_ACCOUNT: process.env.ARCIUM_FEE_POOL_ACCOUNT,
+  ARCIUM_ACCURACY_CIRCUIT_URL: process.env.ARCIUM_ACCURACY_CIRCUIT_URL,
+  ARCIUM_ACCURACY_CIRCUIT_HASH: process.env.ARCIUM_ACCURACY_CIRCUIT_HASH, // e.g., JSON array of 32 bytes
+
+  // NEW: Accuracy computation configuration
+  ACCURACY_WINDOW_MS: process.env.ACCURACY_WINDOW_MS || '300000', // 5 minutes default
+  ACCURACY_TRIGGER_THRESHOLD: process.env.ACCURACY_TRIGGER_THRESHOLD || '0.5',
+  
+  // NEW: Redis configuration for BullMQ
+  REDIS_HOST: process.env.REDIS_HOST || 'localhost',
+  REDIS_PORT: process.env.REDIS_PORT || '6379',
+  REDIS_PASSWORD: process.env.REDIS_PASSWORD,
+  REDIS_DB: process.env.REDIS_DB || '0',
+  REDIS_URL: process.env.REDIS_URL, // Alternative: full Redis URL
 });

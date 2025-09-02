@@ -8,3 +8,5 @@ pub use marketplace::*;
 pub use device_registry::*;
 pub use listing::*;
 pub use purchase_record::*;
+pub mod dq;
+pub use dq::*;

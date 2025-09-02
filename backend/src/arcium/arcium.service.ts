@@ -4,6 +4,7 @@ import * as anchor from '@coral-xyz/anchor';
 import { PublicKey, SystemProgram, Finality, SYSVAR_INSTRUCTIONS_PUBKEY } from '@solana/web3.js';
 import idl from '../solana/idl.json';
 import bs58 from 'bs58';
+import { arciumMetrics } from '../metrics/metrics.module';
 
 import {
   // PDA helpers & constants (TS client)
@@ -352,6 +353,26 @@ export class ArciumService {
       return expected;
     }
     return overridePk;
+  }
+
+  private resolveAccuracyCompDefAccount(programId: PublicKey): PublicKey {
+    const offBytes = getCompDefAccOffset('compute_accuracy_score');
+    const idx = Buffer.from(offBytes).readUInt32LE();
+    return getCompDefAccAddress(programId, idx);
+  }
+
+  private async ensureAccuracyCompDef(): Promise<PublicKey> {
+    const programId = this.getAppProgramId();
+    const acc = this.resolveAccuracyCompDefAccount(programId);
+    const info = await this.provider.connection.getAccountInfo(acc, 'confirmed');
+    if (!info) {
+      // Do NOT try to init here (depends on on-chain availability). Fail loudly with an actionable message.
+      throw new Error(
+        `compute_accuracy_score comp-def not found at ${acc.toBase58()}. ` +
+        `Initialize it on-chain (mirror your reseal comp-def init) and retry.`
+      );
+    }
+    return acc;
   }
 
   // ---------------------------------------------------------------------------
@@ -949,7 +970,7 @@ export class ArciumService {
   // Robust callback transaction discovery (legacy + v0 support)
   // ---------------------------------------------------------------------------
 
-  private async waitForResealCallbackTx(params: {
+ private async waitForResealCallbackTx(params: {
     programId: PublicKey;
     purchaseRecord: PublicKey;
     listingState?: PublicKey;
@@ -962,29 +983,132 @@ export class ArciumService {
     const discSet = this.getCallbackDiscSet();
     const ENABLE_ADDRESS_PAIR_SCANS = process.env.ENABLE_ADDRESS_PAIR_SCANS === 'true';
 
-    const pollOne = async (addr: PublicKey) => {
-      this.logger.debug({
-        msg: 'reseal.callback.poll.start.addr',
-        address: addr.toBase58(),
-        afterSignature,
-        timeoutMs
-      });
+    // Increment metrics (with required label)
+    arciumMetrics.resealCallbacksTotal.inc({ via: 'poll_addr' });
+    const waitTimer = arciumMetrics.resealCallbackWaitSeconds.startTimer();
 
-      const seen = new Set<string>();
-      let txsInspected = 0;
-      let before: string | undefined = undefined;
+    try {
+      const pollOne = async (addr: PublicKey) => {
+        this.logger.debug({
+          msg: 'reseal.callback.poll.start.addr',
+          address: addr.toBase58(),
+          afterSignature,
+          timeoutMs
+        });
 
+        const seen = new Set<string>();
+        let txsInspected = 0;
+        let before: string | undefined = undefined;
+
+        while (Date.now() - start < timeoutMs) {
+          try {
+            const opts: any = { limit: 50 };
+            if (before) opts.before = before;
+            if (afterSignature) opts.until = afterSignature; // page only *newer* than submit
+            // (RPC semantics documented by Solana: `before`/`until` bound the range.)  // 
+
+            const sigs = await this.provider.connection.getSignaturesForAddress(
+              addr,
+              opts,
+              commitment as any
+            );
+
+            if (!sigs.length) {
+              await this.backoffWithJitter(this.POLL_SLEEP_MS);
+              continue;
+            }
+
+            for (const s of sigs) {
+              if (seen.has(s.signature)) continue;
+              seen.add(s.signature);
+              txsInspected++;
+
+              const tx = await this.provider.connection.getTransaction(s.signature, {
+                maxSupportedTransactionVersion: 0,
+                commitment
+              });
+              if (!tx?.transaction?.message) continue;
+
+              const { ixData, hit } = this.extractIxDataByDiscs(tx, programId, discSet, s.signature);
+              if (hit && ixData) {
+                this.logger.log({
+                  msg: 'reseal.callback.detected',
+                  sig: s.signature,
+                  address: addr.toBase58(),
+                  txsInspected
+                });
+                return { sig: s.signature, ixData };
+              }
+            }
+
+            before = sigs[sigs.length - 1].signature;
+            await this.backoffWithJitter(this.POLL_SLEEP_MS);
+          } catch (error: any) {
+            if (error.message?.includes('429')) {
+              const backoffMs = Math.min(5000, this.POLL_SLEEP_MS * 2);
+              this.logger.warn({ msg: 'reseal.callback.429.backoff', backoffMs });
+              await this.backoffWithJitter(backoffMs);
+            } else {
+              this.logger.warn({ msg: 'reseal.callback.poll.error', error: error.message });
+              await this.backoffWithJitter(this.POLL_SLEEP_MS);
+            }
+          }
+        }
+
+        this.logger.warn({
+          msg: 'reseal.callback.timeout.debug',
+          address: addr.toBase58(),
+          txsInspected,
+          seenCount: seen.size
+        });
+        throw new Error('reseal.callback.timeout');
+      };
+
+      if (ENABLE_ADDRESS_PAIR_SCANS && listingState && !listingState.equals(purchaseRecord)) {
+        this.logger.debug({ msg: 'reseal.callback.poll.dual', purchaseRecord: purchaseRecord.toBase58(), listingState: listingState.toBase58() });
+        return await Promise.any([pollOne(purchaseRecord), pollOne(listingState)]);
+      }
+      return await pollOne(purchaseRecord);
+    } finally {
+      waitTimer();
+    }
+  }
+
+  private async pollByProgramIdForCallback(params: {
+    programId: PublicKey;
+    afterSignature?: string;
+    commitment?: Finality;
+    timeoutMs: number;
+  }): Promise<{ sig: string; ixData: Buffer }> {
+    const { programId, afterSignature, commitment = 'confirmed', timeoutMs } = params;
+    const start = Date.now();
+    const addr = programId;
+    const discSet = this.getCallbackDiscSet();
+
+    // Metrics: program-wide polling path
+    arciumMetrics.resealCallbacksTotal.inc({ via: 'poll_program' });
+    const waitTimer = arciumMetrics.resealCallbackWaitSeconds.startTimer();
+
+    this.logger.debug({
+      msg: 'reseal.callback.poll.start.program',
+      programId: programId.toBase58(),
+      afterSignature,
+      timeoutMs
+    });
+
+    const seen = new Set<string>();
+    let txsInspected = 0;
+    let before: string | undefined = undefined;
+
+    try {
       while (Date.now() - start < timeoutMs) {
         try {
           const opts: any = { limit: 50 };
+          if (afterSignature) opts.until = afterSignature;
           if (before) opts.before = before;
-          if (afterSignature) opts.until = afterSignature; // page only *newer* than submit
-          // (RPC semantics documented by Solana: `before`/`until` bound the range.)  // 
 
           const sigs = await this.provider.connection.getSignaturesForAddress(
-            addr,
-            opts,
-            commitment as any
+            addr, opts, commitment as any
           );
 
           if (!sigs.length) {
@@ -1036,96 +1160,9 @@ export class ArciumService {
         seenCount: seen.size
       });
       throw new Error('reseal.callback.timeout');
-    };
-
-    if (ENABLE_ADDRESS_PAIR_SCANS && listingState && !listingState.equals(purchaseRecord)) {
-      this.logger.debug({ msg: 'reseal.callback.poll.dual', purchaseRecord: purchaseRecord.toBase58(), listingState: listingState.toBase58() });
-      return await Promise.any([pollOne(purchaseRecord), pollOne(listingState)]);
+    } finally {
+      waitTimer();
     }
-    return await pollOne(purchaseRecord);
-  }
-
-  private async pollByProgramIdForCallback(params: {
-    programId: PublicKey;
-    afterSignature?: string;
-    commitment?: Finality;
-    timeoutMs: number;
-  }): Promise<{ sig: string; ixData: Buffer }> {
-    const { programId, afterSignature, commitment = 'confirmed', timeoutMs } = params;
-    const start = Date.now();
-    const addr = programId;
-    const discSet = this.getCallbackDiscSet();
-
-    this.logger.debug({
-      msg: 'reseal.callback.poll.start.program',
-      programId: programId.toBase58(),
-      afterSignature,
-      timeoutMs
-    });
-
-    const seen = new Set<string>();
-    let txsInspected = 0;
-    let before: string | undefined = undefined;
-
-    while (Date.now() - start < timeoutMs) {
-      try {
-        const opts: any = { limit: 50 };
-        if (afterSignature) opts.until = afterSignature;
-        if (before) opts.before = before;
-
-        const sigs = await this.provider.connection.getSignaturesForAddress(
-          addr, opts, commitment as any
-        );
-
-        if (!sigs.length) {
-          await this.backoffWithJitter(this.POLL_SLEEP_MS);
-          continue;
-        }
-
-        for (const s of sigs) {
-          if (seen.has(s.signature)) continue;
-          seen.add(s.signature);
-          txsInspected++;
-
-          const tx = await this.provider.connection.getTransaction(s.signature, {
-            maxSupportedTransactionVersion: 0,
-            commitment
-          });
-          if (!tx?.transaction?.message) continue;
-
-          const { ixData, hit } = this.extractIxDataByDiscs(tx, programId, discSet, s.signature);
-          if (hit && ixData) {
-            this.logger.log({
-              msg: 'reseal.callback.detected',
-              sig: s.signature,
-              address: addr.toBase58(),
-              txsInspected
-            });
-            return { sig: s.signature, ixData };
-          }
-        }
-
-        before = sigs[sigs.length - 1].signature;
-        await this.backoffWithJitter(this.POLL_SLEEP_MS);
-      } catch (error: any) {
-        if (error.message?.includes('429')) {
-          const backoffMs = Math.min(5000, this.POLL_SLEEP_MS * 2);
-          this.logger.warn({ msg: 'reseal.callback.429.backoff', backoffMs });
-          await this.backoffWithJitter(backoffMs);
-        } else {
-          this.logger.warn({ msg: 'reseal.callback.poll.error', error: error.message });
-          await this.backoffWithJitter(this.POLL_SLEEP_MS);
-        }
-      }
-    }
-
-    this.logger.warn({
-      msg: 'reseal.callback.timeout.debug',
-      address: addr.toBase58(),
-      txsInspected,
-      seenCount: seen.size
-    });
-    throw new Error('reseal.callback.timeout');
   }
 
   /** Enhanced event scanning for ResealOutput events within an 8-12s window */
@@ -1268,6 +1305,10 @@ export class ArciumService {
                 await this.writeBuyerCapsuleDebug(Buffer.from(arc1Capsule), '_watch_event');
                 const buyerCid = await this.walrus.uploadData(Buffer.from(arc1Capsule));
                 await this.solana.finalizePurchaseOnChain({ listing, record, dekCapsuleForBuyerCid: buyerCid });
+
+                // Metrics: websocket event path
+                arciumMetrics.resealCallbacksTotal.inc({ via: 'watch_event' });
+
                 this.logger.log({ msg: 'reseal.callback.finalized.event', signature: l.signature, buyerCid });
                 resolved = true;
                 return { signature: l.signature, buyerCid };
@@ -1286,6 +1327,10 @@ export class ArciumService {
         await this.writeBuyerCapsuleDebug(decoded.buyerCapsule, '_watch_ix');
         const buyerCid = await this.walrus.uploadData(decoded.buyerCapsule);
         await this.solana.finalizePurchaseOnChain({ listing, record, dekCapsuleForBuyerCid: buyerCid });
+
+        // Metrics: websocket ix path
+        arciumMetrics.resealCallbacksTotal.inc({ via: 'watch_ix' });
+
         this.logger.log({ msg: 'reseal.callback.finalized.ix', signature: l.signature, buyerCid });
         resolved = true;
         return { signature: l.signature, buyerCid };
@@ -1569,5 +1614,112 @@ export class ArciumService {
         this.logger.debug({ msg:'debug.inner.ix', pid: pid.toBase58(), len: bytes.length, head8, name: name || '(unknown)' });
       }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Queue accuracy score computation (new method for quality metrics)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Queue an accuracy score computation on-chain using Arcium MPC.
+   * Encrypts Q16.16 fixed-point values and submits to compute_accuracy_score.
+   */
+  async queueAccuracyScore(params: {
+    deviceKey: PublicKey;        // callback acc #1 (readonly)
+    listingKey: PublicKey;       // callback acc #2 (readonly)  
+    dqStateKey: PublicKey;       // callback acc #3 (writable)
+    readingQ16: number;          // float, will be packed Q16.16 and encrypted
+    meanQ16: number;             // float, will be packed Q16.16 and encrypted
+    stdQ16: number;              // float, will be packed Q16.16 and encrypted
+    arcisPubkey: Uint8Array;     // 32-bytes Shared pubkey for encryption
+    nonce: bigint;               // u128 nonce
+  }): Promise<{ signature: string; computationOffset: anchor.BN }> {
+    
+    const { deviceKey, listingKey, dqStateKey, readingQ16, meanQ16, stdQ16, arcisPubkey, nonce } = params;
+    
+    this.logger.log('queueAccuracyScore starting', {
+      device: deviceKey.toBase58(),
+      listing: listingKey.toBase58(),
+      dqState: dqStateKey.toBase58(),
+      readingQ16,
+      meanQ16,
+      stdQ16,
+      nonce: nonce.toString(),
+    });
+
+    // 1) Offset: random 8 bytes
+    const computationOffset = new anchor.BN(randomBytes(8), 'hex');
+    const programId = this.getAppProgramId();
+    const payer = this.provider.wallet.publicKey;
+
+    // 2) Derive PDAs consistently with reseal:
+    const mxeAccount = getMXEAccAddress(programId);
+    const mempoolAccount = getMempoolAccAddress(programId);
+    const executingPool = getExecutingPoolAccAddress(programId);
+    const computationAccount = getComputationAccAddress(programId, computationOffset);
+    const compDefAccount = await this.ensureAccuracyCompDef();   // will throw if missing
+    const clusterAccount = this.getClusterAccount();
+    const feePoolAccount = this.getFeePoolAccount();
+    const clockAccount = getClockAccAddress();
+
+    // job PDA (unchanged)
+    const [jobPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('quality_job'), computationAccount.toBuffer()],
+      programId
+    );
+
+    // 3) Pack Q16.16
+    const toQ16_16 = (x: number): number => Math.round(x * 65536) >>> 0;
+    const readingQ16Packed = toQ16_16(readingQ16);
+    const meanQ16Packed    = toQ16_16(meanQ16);
+    const stdQ16Packed     = toQ16_16(stdQ16);
+
+    // 4) Encrypt Enc<Shared,u32> with @arcium-hq/client helpers
+    let encryptedReadingQ16: number[] | Uint8Array;
+    let encryptedMeanQ16: number[] | Uint8Array;
+    let encryptedStdQ16: number[] | Uint8Array;
+
+    if (typeof (clientAny.encryptU32Shared) === 'function') {
+      encryptedReadingQ16 = clientAny.encryptU32Shared(readingQ16Packed, arcisPubkey, nonce);
+      encryptedMeanQ16    = clientAny.encryptU32Shared(meanQ16Packed, arcisPubkey, nonce);
+      encryptedStdQ16     = clientAny.encryptU32Shared(stdQ16Packed, arcisPubkey, nonce);
+    } else if (clientAny?.utils?.sealSharedU32) {
+      encryptedReadingQ16 = clientAny.utils.sealSharedU32(readingQ16Packed, arcisPubkey, nonce);
+      encryptedMeanQ16    = clientAny.utils.sealSharedU32(meanQ16Packed, arcisPubkey, nonce);
+      encryptedStdQ16     = clientAny.utils.sealSharedU32(stdQ16Packed, arcisPubkey, nonce);
+    } else {
+      throw new Error('queueAccuracyScore: shared-u32 encryption helper not available in @arcium-hq/client. Upgrade the package or wire an encryptor.');
+    }
+
+    // 5) Call the instruction. IMPORTANT: make the arg order match the IDL EXACTLY.
+    // Inspect idl.json → instructions[].name === "computeAccuracyScore" and use that order.
+    const signature = await (this.program as any).methods
+      .computeAccuracyScore(
+        computationOffset,
+        Uint8Array.from(encryptedReadingQ16),
+        Uint8Array.from(encryptedMeanQ16),
+        Uint8Array.from(encryptedStdQ16),
+        Array.from(arcisPubkey),   // Arcis shared pubkey (32 bytes)
+        nonce                      // u128 (BN or bigint is fine for Anchor)
+      )
+      .accounts({
+        payer,
+        mxeAccount,
+        mempoolAccount,
+        executingPool,
+        computationAccount,
+        compDefAccount,
+        clusterAccount,
+        poolAccount: feePoolAccount,
+        clockAccount,
+        jobPda,
+        device: deviceKey,
+        listingState: listingKey,
+        systemProgram: SystemProgram.programId,
+        arciumProgram: getArciumProgAddress(),
+      })
+      .rpc({ commitment: 'confirmed' });
+
+    return { signature, computationOffset };
   }
 }

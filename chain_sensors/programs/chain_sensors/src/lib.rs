@@ -2,17 +2,23 @@ use anchor_lang::prelude::*;
 use arcium_anchor::prelude::*;
 use arcium_macros::{
     arcium_callback, arcium_program,
-    // also need these macros for account contexts:
     init_computation_definition_accounts,
     queue_computation_accounts,
     callback_accounts,
 };
-use arcium_client::idl::arcium::types::{CircuitSource, OffChainCircuitSource};
+use arcium_client::idl::arcium::types::{
+    CircuitSource,
+    OffChainCircuitSource,
+    CallbackAccount, // ✅ needed for queue_computation() cb_accs below
+};
 use anchor_lang::solana_program::sysvar::instructions as sys_ix;
 
 pub mod instructions;
 mod state;
-use instructions::*;
+
+// Re-export so the macro can see generated __client_accounts_* helpers
+pub use instructions::*;
+pub use instructions as __client_accounts_instructions;
 
 const COMP_DEF_OFFSET_ADD_TOGETHER: u32 = comp_def_offset("add_together");
 const COMP_DEF_OFFSET_COMPUTE_ACCURACY_SCORE: u32 = comp_def_offset("compute_accuracy_score");
@@ -20,24 +26,212 @@ const COMP_DEF_OFFSET_RESEAL_DEK: u32 = comp_def_offset("reseal_dek");
 
 declare_id!("DWbGQjpG3aAciCfuSt16PB5FuuJhf5XATmoUpTMGRfU9");
 
+// --------------------------- Events & Errors ---------------------------
+
+#[event]
+pub struct QualityScoreEvent {
+    pub accuracy_score: [u8; 32],
+    pub nonce: [u8; 16],
+    pub computation_type: String,
+}
+
+#[event]
+pub struct ResealOutput {
+    pub listing: Pubkey,
+    pub record:  Pubkey,
+    pub encryption_key: [u8; 32],
+    pub nonce: [u8; 16],
+    pub c0: [u8; 32],
+    pub c1: [u8; 32],
+    pub c2: [u8; 32],
+    pub c3: [u8; 32],
+}
+
+#[error_code]
+pub enum ErrorCode {
+    #[msg("The computation was aborted")]
+    AbortedComputation,
+    #[msg("Cluster not set")]
+    ClusterNotSet,
+    #[msg("Unauthorized caller")]
+    Unauthorized,
+}
+
+// --------------------------- Helpers ---------------------------
+
 fn assert_called_by_arcium(ix_sysvar: &AccountInfo, arcium_pid: &Pubkey) -> Result<()> {
     let idx = sys_ix::load_current_index_checked(ix_sysvar)? as usize;
-
-    // 1) Accept when the current top-level instruction is Arcium (CPI case)
     let cur = sys_ix::load_instruction_at_checked(idx, ix_sysvar)?;
     if cur.program_id == *arcium_pid {
         return Ok(());
     }
-
-    // 2) Also accept when the previous top-level instruction is Arcium (adjacent-in-message case)
     if idx > 0 {
         let prev = sys_ix::load_instruction_at_checked(idx - 1, ix_sysvar)?;
         require_keys_eq!(prev.program_id, *arcium_pid, ErrorCode::Unauthorized);
         return Ok(());
     }
-
     err!(ErrorCode::Unauthorized)
 }
+
+// --------------------------- Arcium ACCOUNTS (moved ABOVE program) ---------------------------
+// Keep ALL Arcium account structs (init/queue/callback) here so #[arcium_program] can import
+// the generated __client_accounts_* modules during expansion.
+
+// ---- reseal_dek accounts ----
+#[init_computation_definition_accounts("reseal_dek", payer)]
+#[derive(Accounts)]
+pub struct InitResealDekCompDef<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(mut, address = derive_mxe_pda!())]
+    pub mxe_account: Account<'info, MXEAccount>,
+    #[account(mut)]
+    pub comp_def_account: UncheckedAccount<'info>,
+    pub arcium_program: Program<'info, Arcium>,
+    pub system_program: Program<'info, System>,
+}
+
+#[queue_computation_accounts("reseal_dek", payer)]
+#[derive(Accounts)]
+#[instruction(computation_offset: u64)]
+pub struct ResealDek<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(address = derive_mxe_pda!())]
+    pub mxe_account: Account<'info, MXEAccount>,
+    #[account(mut, address = derive_mempool_pda!())]
+    pub mempool_account: UncheckedAccount<'info>,
+    #[account(mut, address = derive_execpool_pda!())]
+    pub executing_pool: UncheckedAccount<'info>,
+    #[account(mut, address = derive_comp_pda!(computation_offset))]
+    pub computation_account: UncheckedAccount<'info>,
+    #[account(address = derive_comp_def_pda!(COMP_DEF_OFFSET_RESEAL_DEK))]
+    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
+    #[account(mut, address = ARCIUM_FEE_POOL_ACCOUNT_ADDRESS)]
+    pub pool_account: Account<'info, FeePool>,
+    #[account(address = ARCIUM_CLOCK_ACCOUNT_ADDRESS)]
+    pub clock_account: Account<'info, ClockAccount>,
+    #[account(mut, address = derive_cluster_pda!(mxe_account))]
+    pub cluster_account: Account<'info, Cluster>,
+    /// CHECK: pointer-only
+    pub listing_state: UncheckedAccount<'info>,
+    /// CHECK: pointer-only
+    pub purchase_record: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+    pub arcium_program: Program<'info, Arcium>,
+}
+
+#[callback_accounts("reseal_dek", payer)]
+#[derive(Accounts)]
+pub struct ResealDekCallback<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub arcium_program: Program<'info, Arcium>,
+    #[account(address = derive_comp_def_pda!(COMP_DEF_OFFSET_RESEAL_DEK))]
+    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
+    /// CHECK: verified by macro
+    #[account(address = ::anchor_lang::solana_program::sysvar::instructions::ID)]
+    pub instructions_sysvar: AccountInfo<'info>,
+    /// CHECK: pointer-only
+    pub listing_state: UncheckedAccount<'info>,
+    /// CHECK: pointer-only
+    pub purchase_record: UncheckedAccount<'info>,
+}
+
+// ---- compute_accuracy_score accounts ----
+#[queue_computation_accounts("compute_accuracy_score", payer)]
+#[derive(Accounts)]
+#[instruction(computation_offset: u64)]
+pub struct ComputeAccuracyScore<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(address = derive_mxe_pda!())]
+    pub mxe_account: Account<'info, MXEAccount>,
+    #[account(mut, address = derive_mempool_pda!())]
+    pub mempool_account: UncheckedAccount<'info>,
+    #[account(mut, address = derive_execpool_pda!())]
+    pub executing_pool: UncheckedAccount<'info>,
+    #[account(mut, address = derive_comp_pda!(computation_offset))]
+    pub computation_account: UncheckedAccount<'info>,
+    #[account(address = derive_comp_def_pda!(COMP_DEF_OFFSET_COMPUTE_ACCURACY_SCORE))]
+    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
+    #[account(mut, address = derive_cluster_pda!(mxe_account))]
+    pub cluster_account: Account<'info, Cluster>,
+    #[account(mut, address = ARCIUM_FEE_POOL_ACCOUNT_ADDRESS)]
+    pub pool_account: Account<'info, FeePool>,
+    #[account(address = ARCIUM_CLOCK_ACCOUNT_ADDRESS)]
+    pub clock_account: Account<'info, ClockAccount>,
+
+    // Job PDA (stores nonce/metadata)
+    #[account(
+        init_if_needed,
+        payer = payer,
+        space = 8 + crate::state::job::QualityJob::SIZE,
+        seeds = [crate::state::job::QualityJob::SEED, computation_account.key().as_ref()],
+        bump
+    )]
+    pub job_pda: Account<'info, crate::state::job::QualityJob>,
+
+    /// CHECK: pointer-only
+    pub device: UncheckedAccount<'info>,
+    /// CHECK: pointer-only
+    pub listing_state: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
+    pub arcium_program: Program<'info, Arcium>,
+}
+
+#[callback_accounts("compute_accuracy_score", payer)]
+#[derive(Accounts)]
+pub struct ComputeAccuracyScoreCallback<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub arcium_program: Program<'info, Arcium>,
+    #[account(address = derive_comp_def_pda!(COMP_DEF_OFFSET_COMPUTE_ACCURACY_SCORE))]
+    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
+
+    /// CHECK: provided by Arcium runtime; used to derive Job PDA seeds
+    #[account(mut)]
+    pub computation_account: UncheckedAccount<'info>,
+
+    #[account(
+        mut,
+        seeds = [crate::state::job::QualityJob::SEED, computation_account.key().as_ref()],
+        bump
+    )]
+    pub job_pda: Account<'info, crate::state::job::QualityJob>,
+
+    /// CHECK: verified by constraint
+    #[account(address = ::anchor_lang::solana_program::sysvar::instructions::ID)]
+    pub instructions_sysvar: AccountInfo<'info>,
+
+    /// CHECK: pointer-only
+    pub device: UncheckedAccount<'info>,
+    /// CHECK: pointer-only
+    pub listing_state: UncheckedAccount<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"dqstate", device.key().as_ref()],
+        bump
+    )]
+    pub dq_state: Account<'info, crate::state::dq::DqState>,
+}
+
+#[init_computation_definition_accounts("compute_accuracy_score", payer)]
+#[derive(Accounts)]
+pub struct InitAccuracyScoreCompDef<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(mut, address = derive_mxe_pda!())]
+    pub mxe_account: Box<Account<'info, MXEAccount>>,
+    #[account(mut)]
+    pub comp_def_account: UncheckedAccount<'info>,
+    pub arcium_program: Program<'info, Arcium>,
+    pub system_program: Program<'info, System>,
+}
+
+// --------------------------- Program ---------------------------
 
 #[arcium_program]
 pub mod chain_sensors {
@@ -139,13 +333,52 @@ pub mod chain_sensors {
         instructions::update_marketplace::handler(ctx, new_fee, is_active)
     }
 
+    // ---------- DQ ----------
+    pub fn init_dq_for_device(
+        ctx: Context<InitDqForDevice>,
+        authority: Pubkey,
+        expected_rate_hz: u32,
+        stale_threshold_ms: u32,
+        var_hi_q16_16: u32,
+        var_lo_q16_16: u32,
+        eps_q16_16: u32,
+    ) -> Result<()> {
+        instructions::quality::init_dq_for_device_handler(
+            ctx, authority, expected_rate_hz, stale_threshold_ms, var_hi_q16_16, var_lo_q16_16, eps_q16_16
+        )
+    }
+
+    pub fn publish_quality_metrics(
+        ctx: Context<PublishQualityMetrics>,
+        window_start: i64,
+        window_end: i64,
+        field_completeness_bps: u16,
+        packet_completeness_bps: u16,
+        stale_ratio_bps: u16,
+        delay_p50_ms: u32,
+        delay_p90_ms: u32,
+        delay_p99_ms: u32,
+        rolling_var_q16_16: u32,
+        flags: u8,
+        accuracy_score_opt: Option<u8>,
+        quality_score_bps_opt: Option<u16>,
+    ) -> Result<()> {
+        instructions::quality::publish_quality_metrics_handler(
+            ctx,
+            window_start, window_end,
+            field_completeness_bps, packet_completeness_bps,
+            stale_ratio_bps, delay_p50_ms, delay_p90_ms, delay_p99_ms,
+            rolling_var_q16_16, flags, accuracy_score_opt, quality_score_bps_opt,
+        )
+    }
+
+    // ---------- Accuracy comp-def ----------
     pub fn init_accuracy_score_comp_def(ctx: Context<InitAccuracyScoreCompDef>) -> Result<()> {
-        // Ensure the corresponding *_testnet.arcis exists in build/ or comment
-        // this out until you have the artifact available.
         init_comp_def(ctx.accounts, true, 0, None, None)?;
         Ok(())
     }
 
+    // ---------- Queue accuracy ----------
     pub fn compute_accuracy_score(
         ctx: Context<ComputeAccuracyScore>,
         computation_offset: u64,
@@ -157,7 +390,6 @@ pub mod chain_sensors {
     ) -> Result<()> {
         let clock = Clock::get()?;
         ctx.accounts.job_pda.nonce = nonce;
-        ctx.accounts.job_pda.bump = ctx.bumps.job_pda;
         ctx.accounts.job_pda.created_at = clock.unix_timestamp;
 
         let args = vec![
@@ -167,22 +399,43 @@ pub mod chain_sensors {
             Argument::EncryptedU32(encrypted_mean_q16_16),
             Argument::EncryptedU32(encrypted_std_q16_16),
         ];
-        queue_computation(ctx.accounts, computation_offset, args, vec![], None)?;
+
+        let device_key = ctx.accounts.device.key();
+        let listing_key = ctx.accounts.listing_state.key();
+        let dq_state_pda =
+            Pubkey::find_program_address(&[b"dqstate", device_key.as_ref()], ctx.program_id).0;
+
+        let cb_accs = vec![
+            CallbackAccount { pubkey: device_key,  is_writable: false },
+            CallbackAccount { pubkey: listing_key, is_writable: false },
+            CallbackAccount { pubkey: dq_state_pda, is_writable: true  },
+        ];
+
+        queue_computation(ctx.accounts, computation_offset, args, cb_accs, None)?;
         Ok(())
     }
 
+    // ---------- Accuracy callback ----------
     #[arcium_callback(encrypted_ix = "compute_accuracy_score")]
     pub fn compute_accuracy_score_callback(
         ctx: Context<ComputeAccuracyScoreCallback>,
         output: ComputationOutputs<ComputeAccuracyScoreOutput>,
     ) -> Result<()> {
-        let accuracy_ciphertext = match output {
-            ComputationOutputs::Success(ComputeAccuracyScoreOutput { field_0: result }) => result,
+        let enc = match output {
+            ComputationOutputs::Success(ComputeAccuracyScoreOutput { field_0 }) => field_0,
             _ => return Err(ErrorCode::AbortedComputation.into()),
         };
 
-        let digest = anchor_lang::solana_program::keccak::hash(&accuracy_ciphertext).0;
+        // Serialize + hash ciphertext bytes
+        let enc_bytes = enc.try_to_vec().map_err(|_| ErrorCode::AbortedComputation)?;
+        let digest = anchor_lang::solana_program::keccak::hash(&enc_bytes).0;
+
         let nonce_le: [u8; 16] = ctx.accounts.job_pda.nonce.to_le_bytes();
+
+        let st = &mut ctx.accounts.dq_state;
+        st.last_acc_ciphertext_hash = digest;
+        st.last_acc_nonce_le = nonce_le;
+        st.last_updated_ts = Clock::get()?.unix_timestamp;
 
         emit!(QualityScoreEvent {
             accuracy_score: digest,
@@ -193,16 +446,15 @@ pub mod chain_sensors {
         Ok(())
     }
 
+    // ---------- Reseal comp-def ----------
     pub fn init_reseal_dek_comp_def(ctx: Context<InitResealDekCompDef>) -> Result<()> {
-        // This init uses OffChain source for the comp-def metadata, but the
-        // compile-time macros still require a local build/*.arcis file.
         init_comp_def(
             ctx.accounts,
             false,
             0,
             Some(CircuitSource::OffChain(OffChainCircuitSource {
                 source: "https://github.com/RedaRahmani/ChainSensors-V1/releases/download/v0.1.0/reseal_dek.arcis".to_string(),
-                hash: [0; 32], // integrity not enforced yet
+                hash:[168, 104, 243, 119, 239, 175, 108, 148, 212, 136, 204, 96, 132, 179, 193, 113, 149, 206, 164, 33, 43, 238, 48, 253, 85, 155, 187, 16, 44, 116, 252, 217],
             })),
             None,
         )?;
@@ -228,34 +480,26 @@ pub mod chain_sensors {
         )
     }
 
-    // IMPORTANT: callback name must be <encrypted_ix>_callback ("reseal_dek_callback")
-    // The output type is generated by the Arcium macros; it contains SharedEncryptedStruct<4>.
     #[arcium_callback(encrypted_ix = "reseal_dek")]
     pub fn reseal_dek_callback(
         ctx: Context<ResealDekCallback>,
         output: ComputationOutputs<ResealDekOutput>,
     ) -> Result<()> {
-        msg!("reseal_dek_callback: entry");
-
-        // Verify this was invoked by the Arcium program (top-level).
         assert_called_by_arcium(
             &ctx.accounts.instructions_sysvar,
             &ctx.accounts.arcium_program.key(),
         )?;
-        msg!("reseal_dek_callback: verified arcium caller");
 
         let o = match output {
             ComputationOutputs::Success(ResealDekOutput { field_0 }) => field_0,
             _ => return Err(ErrorCode::AbortedComputation.into()),
         };
 
-        // Emit the structured ARC1 capsule components (anchor event).
-        msg!("reseal_dek_callback: emitting ResealOutput event");
         emit!(ResealOutput {
             listing: ctx.accounts.listing_state.key(),
             record:  ctx.accounts.purchase_record.key(),
             encryption_key: o.encryption_key,
-            nonce: o.nonce.to_le_bytes(),   // little-endian
+            nonce: o.nonce.to_le_bytes(),
             c0: o.ciphertexts[0],
             c1: o.ciphertexts[1],
             c2: o.ciphertexts[2],
@@ -264,123 +508,4 @@ pub mod chain_sensors {
 
         Ok(())
     }
-}
-
-#[event]
-pub struct QualityScoreEvent {
-    pub accuracy_score: [u8; 32],
-    pub nonce: [u8; 16],
-    pub computation_type: String,
-}
-
-// Emitted by reseal_dek_callback; carries the ARC1 capsule pieces.
-#[event]
-pub struct ResealOutput {
-    pub listing: Pubkey,
-    pub record:  Pubkey,
-    pub encryption_key: [u8; 32], // sender ephemeral/public (scheme-dependent)
-    pub nonce: [u8; 16],          // 128-bit nonce/iv (little-endian)
-    pub c0: [u8; 32],
-    pub c1: [u8; 32],
-    pub c2: [u8; 32],
-    pub c3: [u8; 32],
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize)]
-pub struct ComputeAccuracyScoreOutput {
-    pub field_0: Vec<u8>,
-}
-
-// Do NOT define `ResealDekOutput` here — the Arcium macros generate it.
-
-// Accounts required by the reseal_dek callback.
-// Include payer + standard arcium accounts; then append our extra callback accounts
-// in the same order we supplied them in queue_computation.
-#[callback_accounts("reseal_dek", payer)]
-#[derive(Accounts)]
-pub struct ResealDekCallback<'info> {
-    // MUST be a Signer here (matches macro's expectation)
-    #[account(mut)]
-    pub payer: Signer<'info>,
-
-    pub arcium_program: Program<'info, Arcium>,
-
-    #[account(address = derive_comp_def_pda!(COMP_DEF_OFFSET_RESEAL_DEK))]
-    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
-
-    /// CHECK: verified by macro; provided for validation context
-    #[account(address = ::anchor_lang::solana_program::sysvar::instructions::ID)]
-    pub instructions_sysvar: AccountInfo<'info>,
-
-    /// Extra callback accounts (order must match what you queued)
-    /// CHECK: pointer-only
-    pub listing_state: UncheckedAccount<'info>,
-    /// CHECK: pointer-only
-    pub purchase_record: UncheckedAccount<'info>,
-}
-
-#[error_code]
-pub enum ErrorCode {
-    #[msg("The computation was aborted")]
-    AbortedComputation,
-    #[msg("Cluster not set")]
-    ClusterNotSet,
-    #[msg("Unauthorized caller")]
-    Unauthorized,
-}
-
-#[init_computation_definition_accounts("reseal_dek", payer)]
-#[derive(Accounts)]
-pub struct InitResealDekCompDef<'info> {
-    #[account(mut)]
-    pub payer: Signer<'info>,
-
-    #[account(mut, address = derive_mxe_pda!())]
-    pub mxe_account: Account<'info, MXEAccount>,
-
-    #[account(mut)]
-    pub comp_def_account: UncheckedAccount<'info>,
-    pub arcium_program: Program<'info, Arcium>,
-    pub system_program: Program<'info, System>,
-}
-
-#[queue_computation_accounts("reseal_dek", payer)]
-#[derive(Accounts)]
-#[instruction(computation_offset: u64)]
-pub struct ResealDek<'info> {
-    #[account(mut)]
-    pub payer: Signer<'info>,
-
-    #[account(address = derive_mxe_pda!())]
-    pub mxe_account: Account<'info, MXEAccount>,
-
-    #[account(mut, address = derive_mempool_pda!())]
-    pub mempool_account: UncheckedAccount<'info>,
-
-    #[account(mut, address = derive_execpool_pda!())]
-    pub executing_pool: UncheckedAccount<'info>,
-
-    #[account(mut, address = derive_comp_pda!(computation_offset))]
-    pub computation_account: UncheckedAccount<'info>,
-
-    #[account(address = derive_comp_def_pda!(COMP_DEF_OFFSET_RESEAL_DEK))]
-    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
-
-    #[account(mut, address = ARCIUM_FEE_POOL_ACCOUNT_ADDRESS)]
-    pub pool_account: Account<'info, FeePool>,
-
-    #[account(address = ARCIUM_CLOCK_ACCOUNT_ADDRESS)]
-    pub clock_account: Account<'info, ClockAccount>,
-
-    #[account(mut, address = derive_cluster_pda!(mxe_account))]
-    pub cluster_account: Account<'info, Cluster>,
-
-    // Extra callback accounts (we only need their keys for the event)
-    /// CHECK: pointer only for event emission
-    pub listing_state: UncheckedAccount<'info>,
-    /// CHECK: pointer only for event emission
-    pub purchase_record: UncheckedAccount<'info>,
-
-    pub system_program: Program<'info, System>,
-    pub arcium_program: Program<'info, Arcium>,
 }

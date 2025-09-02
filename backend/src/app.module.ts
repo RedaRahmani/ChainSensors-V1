@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { DpsModule } from './dps/dps.module';
 import { RegistryModule } from './registry/registry.module';
 import { IngestModule } from './ingest/ingest.module';
@@ -13,11 +14,16 @@ import configuration from './configuration';
 import { ArciumModule } from './arcium/arcium.module';
 import { CapsulesModule } from './capsules/capsules.module';
 import { RewardsModule } from './rewards/rewards.module';
+import { QualityModule } from './quality/quality.module';
+import { MetricsModule } from './metrics/metrics.module';
+// import { QueuesModule } from './queues/queues.module'; // TODO: Add when BullMQ deps are installed
 
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
+
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     ConfigModule.forRoot({
       isGlobal: true,
       load: [() => require('./configuration').default()],
@@ -43,6 +49,7 @@ import { AuthModule } from './auth/auth.module';
     UsersModule,
     AuthModule,
 
+    MetricsModule,
     SolanaModule,
     WalrusModule,
     RewardsModule,
@@ -54,6 +61,8 @@ import { AuthModule } from './auth/auth.module';
     ListingModule,
     ArciumModule,
     CapsulesModule,
+    QualityModule,
+    // QueuesModule, // TODO: Uncomment when BullMQ dependencies are installed
     // RatingModule,
   ],
 })
