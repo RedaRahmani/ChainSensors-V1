@@ -44,6 +44,7 @@
     "@solana/wallet-adapter-react-ui": "latest",
     "@solana/wallet-adapter-wallets": "latest",
     "@solana/web3.js": "latest",
+    "@types/uuid": "^8.3.4",
     "autoprefixer": "^10.4.20",
     "axios": "^1.9.0",
     "class-variance-authority": "^0.7.1",
@@ -69,9 +70,12 @@
     "tailwind-merge": "^2.5.5",
     "tailwindcss-animate": "^1.0.7",
     "tweetnacl": "^1.0.3",
-    "uuid": "^8.3.2",
+    "uuid": "^9.0.1",
     "vaul": "^0.9.6",
     "zod": "^3.24.1"
+  },
+  "overrides": {
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
     "@types/node": "^22",
