@@ -56,14 +56,3 @@ pids
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
-ca-cert.pem
-ca-key.pem
-broker-cert.pem
-broker-key.pem
-broker.csr
-keypair.json
-reda.json
-
-broker-san.cnf
-ca-cert copy.srl
-ca-cert.srl
