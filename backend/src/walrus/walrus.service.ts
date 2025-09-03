@@ -333,4 +333,14 @@ export class WalrusService {
   async putCapsule(bytes: Buffer): Promise<string> {
     return this.putBlobWithRetry(bytes);
   }
+
+
+  // add inside WalrusService (new version)
+async putMetadata(obj: any): Promise<string> {
+  const blobId = await this.uploadMetadata(obj);     // uses retry path
+  const normalized = this.normalizeBlobId(blobId);   // match old behavior
+  this.logger.log(`Walrus putMetadata → ${normalized}`);
+  return normalized;
+}
+
 }

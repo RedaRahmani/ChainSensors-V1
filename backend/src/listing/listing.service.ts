@@ -8,6 +8,8 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { PublicKey } from '@solana/web3.js';
 import { v4 as uuidv4 } from 'uuid';
+import * as crypto from 'crypto'; // ⬅️ added
+
 import { ListingStatus } from './listing.types';
 import { Listing, ListingDocument } from './listing.schema';
 import { CreateListingDto } from './dto/create-listing.dto';
@@ -30,8 +32,18 @@ export class ListingService {
     private readonly arciumService: ArciumService,
   ) {}
 
-  private async ensureValidCapsuleCid(inputCid: string | undefined, deviceId: string): Promise<string> {
-    // If caller provided a CID, verify it decodes to a 144-byte capsule
+  /**
+   * Try provided CID; if invalid or missing, repair by:
+   *  - fetching device metadata JSON (Walrus),
+   *  - extracting DEK (accept multiple key names),
+   *  - if absent: generate DEK server-side, persist new metadata JSON to Walrus and DB,
+   *  - seal DEK to MXE capsule (144 bytes), upload to Walrus, return CID.
+   */
+  private async ensureValidCapsuleCid(
+    inputCid: string | undefined,
+    deviceId: string,
+  ): Promise<string> {
+    // 1) If caller provided a CID, verify it decodes to a 144-byte capsule
     if (inputCid && inputCid.trim()) {
       const normalized = this.walrusService.normalizeBlobId(inputCid.trim());
       try {
@@ -40,36 +52,89 @@ export class ListingService {
           this.logger.log(`Capsule CID verified via Walrus (${used}) length=144`);
           return normalized;
         }
-        this.logger.warn(`Provided capsule CID resolved to ${bytes.length} bytes; expected 144. Will attempt self-repair from device metadata.`);
+        this.logger.warn(
+          `Provided capsule CID resolved to ${bytes.length} bytes; expected 144. Will attempt self-repair from device metadata.`,
+        );
       } catch (e: any) {
-        this.logger.warn(`Capsule CID fetch failed (${e?.message}); will attempt self-repair from device metadata.`);
+        this.logger.warn(
+          `Capsule CID fetch failed (${e?.message}); will attempt self-repair from device metadata.`,
+        );
       }
     }
 
-    // Self-repair path: fetch device metadata → get plaintext DEK → seal → upload
+    // 2) Self-repair path: fetch device + metadata
     const device = await this.deviceModel.findOne({ deviceId }).lean().exec();
-    if (!device || !device.metadataCid) {
-      throw new BadRequestException(`Device ${deviceId} has no metadataCid; cannot repair capsule`);
-    }
-    const meta: any = await this.walrusService.getMetadata(device.metadataCid);
-    const dekB64 =
-      meta?.dekPlaintextB64 ??
-      meta?.dek_plaintext_b64 ??
-      device?.metadata?.dekPlaintextB64 ??
-      device?.metadata?.dek_plaintext_b64 ??
-      null;
-    if (!dekB64) {
-      throw new BadRequestException(`Device ${deviceId} metadata lacks DEK; cannot repair capsule`);
-    }
-    const dek = Buffer.from(String(dekB64).replace(/-/g,'+').replace(/_/g,'/'), 'base64');
-    if (dek.length !== 32) {
-      throw new BadRequestException(`Device ${deviceId} DEK must be 32 bytes, got ${dek.length}`);
+    if (!device) {
+      throw new BadRequestException(`Device ${deviceId} not found`);
     }
 
+    let meta: any = {};
+    if (device.metadataCid) {
+      try {
+        meta = await this.walrusService.getMetadata(device.metadataCid);
+      } catch (e: any) {
+        this.logger.warn(
+          `Walrus metadata fetch failed for ${device.metadataCid}: ${e?.message}`,
+        );
+        meta = {};
+      }
+    }
+
+    // 3) Try many DEK key names (lenient)
+    let dekB64: string | null =
+      meta?.dekPlaintextB64 ??
+      meta?.dek_plaintext_b64 ??
+      meta?.dek ??
+      meta?.dekB64 ??
+      meta?.dek_base64 ??
+      device?.metadata?.dekPlaintextB64 ??
+      device?.metadata?.dek ??
+      device?.metadata?.dekB64 ??
+      device?.metadata?.dek_base64 ??
+      null;
+
+    // 4) If still missing, generate a DEK on the server, upload fresh metadata JSON to Walrus, and patch device doc
+    if (!dekB64) {
+      this.logger.warn(`Device ${deviceId} metadata lacks DEK; generating a new server-side DEK…`);
+
+      const dek = crypto.randomBytes(32);
+      dekB64 = dek.toString('base64');
+
+      const newMeta = {
+        ...(typeof meta === 'object' && meta ? meta : {}),
+        deviceId,
+        dekPlaintextB64: dekB64,
+      };
+
+      // Use modern helper (consistent with new DPS): upload object → CID
+      const newCid = await this.walrusService.uploadMetadata(newMeta);
+      this.logger.log(`Wrote repaired metadata to Walrus: ${newCid}`);
+
+      // Patch DB with new CID and convenience copy
+      await this.deviceModel.updateOne(
+        { deviceId },
+        { $set: { metadataCid: newCid, 'metadata.dekPlaintextB64': dekB64 } },
+        { upsert: false },
+      ).exec();
+
+      meta = newMeta;
+    }
+
+    // 5) Decode DEK and validate
+    const dek = Buffer.from(String(dekB64).replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+    if (dek.length !== 32) {
+      throw new BadRequestException(`Device ${deviceId} DEK invalid length=${dek.length}`);
+    }
+
+    // 6) Seal DEK to MXE capsule and upload
     const mxeCipher = await this.arciumService.sealDekForMxe(dek);
-    if (mxeCipher.length !== 144) throw new BadRequestException(`Resealed capsule not 144 bytes`);
-    const cid = this.walrusService.normalizeBlobId(await this.walrusService.uploadData(mxeCipher));
-    this.logger.log(`Repaired capsule for ${deviceId}: ${cid}`);
+    if (mxeCipher.length !== 144) {
+      throw new BadRequestException(`Resealed capsule not 144 bytes`);
+    }
+    const cid = this.walrusService.normalizeBlobId(
+      await this.walrusService.uploadData(mxeCipher),
+    );
+    this.logger.log(`Prepared capsule for ${deviceId}: ${cid}`);
     return cid;
   }
 
@@ -77,9 +142,24 @@ export class ListingService {
     dto: CreateListingDto,
     sellerPubkey: PublicKey,
   ): Promise<{ listingId: string; unsignedTx: string }> {
+    // Preflight check: ensure device is registered on-chain
+    try {
+      await this.solanaService.assertDeviceRegisteredOrThrow(dto.deviceId);
+    } catch (e: any) {
+      this.logger.error('Device not registered for listing', { deviceId: dto.deviceId, err: e?.message });
+      throw new BadRequestException({
+        code: 'DEVICE_NOT_REGISTERED',
+        message: e?.message ?? `Device ${dto.deviceId} not registered on-chain`,
+        hint: 'Register the device via the device registration flow, then retry listing.',
+      });
+    }
+
     const listingId = uuidv4().replace(/-/g, '').slice(0, 32);
 
-    const ensuredCid = await this.ensureValidCapsuleCid(dto.dekCapsuleForMxeCid, dto.deviceId);
+    const ensuredCid = await this.ensureValidCapsuleCid(
+      dto.dekCapsuleForMxeCid,
+      dto.deviceId,
+    );
 
     this.logger.log('prepareCreateListing()', {
       listingId,
@@ -90,17 +170,16 @@ export class ListingService {
       totalDataUnits: dto.totalDataUnits,
     });
 
-    const { unsignedTx } =
-      await this.solanaService.buildCreateListingTransaction({
-        listingId,
-        dataCid: dto.dataCid,
-        dekCapsuleForMxeCid: ensuredCid,
-        pricePerUnit: dto.pricePerUnit,
-        deviceId: dto.deviceId,
-        totalDataUnits: dto.totalDataUnits,
-        expiresAt: dto.expiresAt ?? null,
-        sellerPubkey,
-      });
+    const { unsignedTx } = await this.solanaService.buildCreateListingTransaction({
+      listingId,
+      dataCid: dto.dataCid,
+      dekCapsuleForMxeCid: ensuredCid,
+      pricePerUnit: dto.pricePerUnit,
+      deviceId: dto.deviceId,
+      totalDataUnits: dto.totalDataUnits,
+      expiresAt: dto.expiresAt ?? null,
+      sellerPubkey,
+    });
 
     await this.listingModel.create({
       listingId,
@@ -134,8 +213,7 @@ export class ListingService {
       throw new BadRequestException(`Listing ${listingId} not pending`);
     }
 
-    const txSignature =
-      await this.solanaService.submitSignedTransactionListing(signedTx);
+    const txSignature = await this.solanaService.submitSignedTransactionListing(signedTx);
 
     listing.txSignature = txSignature;
     listing.status = ListingStatus.Active;
@@ -167,9 +245,7 @@ export class ListingService {
           .exec();
         if (device && device.metadataCid) {
           try {
-            const metadata = await this.walrusService.getMetadata(
-              device.metadataCid,
-            );
+            const metadata = await this.walrusService.getMetadata(device.metadataCid);
             return { ...listing, deviceMetadata: metadata };
           } catch (error: any) {
             this.logger.error(
@@ -183,6 +259,23 @@ export class ListingService {
     );
 
     return enrichedListings;
+  }
+
+  async expireAllActiveListings() {
+    this.logger.log('Expiring all active listings...');
+    
+    const result = await this.listingModel.updateMany(
+      { status: ListingStatus.Active },
+      { 
+        $set: { 
+          status: ListingStatus.Cancelled,
+          updatedAt: new Date()
+        }
+      }
+    );
+    
+    this.logger.log(`Expired ${result.modifiedCount} active listings`, { result });
+    return result;
   }
 
   async preparePurchase(
@@ -229,8 +322,7 @@ export class ListingService {
   ): Promise<{ txSignature: string }> {
     this.logger.log(`finalizePurchase: ${listingId}`, { unitsRequested });
 
-    const txSignature =
-      await this.solanaService.submitSignedPurchaseTransaction(signedTx);
+    const txSignature = await this.solanaService.submitSignedPurchaseTransaction(signedTx);
     this.logger.log(`Transaction ${txSignature} confirmed on chain`);
 
     const listing = await this.listingModel.findOne({ listingId });
@@ -242,7 +334,9 @@ export class ListingService {
     }
     await listing.save();
 
-    this.logger.log(`finalizePurchase -> updated listing: remaining=${listing.remainingUnits} status=${listing.status}`);
+    this.logger.log(
+      `finalizePurchase -> updated listing: remaining=${listing.remainingUnits} status=${listing.status}`,
+    );
     return { txSignature };
   }
 }

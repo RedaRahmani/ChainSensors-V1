@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 
 import { SolanaService } from './solana.service';
+import { SolanaController } from './solana.controller';
 import { TokenService } from './token.service';
 import { PurchasesController } from './purchases.controller';
 import { EventIndexerService } from './event-indexer.service';
@@ -28,7 +29,7 @@ import { IndexerState, IndexerStateSchema } from './indexer-state.schema';
     ]),
   ],
   providers: [SolanaService, TokenService, PurchaseListenerService, EventIndexerService],
-  controllers: [PurchasesController],
+  controllers: [SolanaController, PurchasesController],
   exports: [SolanaService, TokenService, EventIndexerService],
 })
 export class SolanaModule {}

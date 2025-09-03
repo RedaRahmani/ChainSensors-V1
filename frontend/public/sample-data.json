@@ -1,0 +1,242 @@
+[
+  {
+    "timestamp": 8741,
+    "temperature": 28.86,
+    "humidity": 49.26,
+    "pressure": 1015.61,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:08.741Z"
+  },
+  {
+    "timestamp": 10741,
+    "temperature": 28.87,
+    "humidity": 49.25,
+    "pressure": 1015.57,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:10.741Z"
+  },
+  {
+    "timestamp": 12741,
+    "temperature": 28.86,
+    "humidity": 49.23,
+    "pressure": 1015.63,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:12.741Z"
+  },
+  {
+    "timestamp": 14741,
+    "temperature": 28.87,
+    "humidity": 49.24,
+    "pressure": 1015.66,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:14.741Z"
+  },
+  {
+    "timestamp": 16741,
+    "temperature": 28.86,
+    "humidity": 49.40,
+    "pressure": 1015.63,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:16.741Z"
+  },
+  {
+    "timestamp": 18741,
+    "temperature": 28.87,
+    "humidity": 49.45,
+    "pressure": 1015.63,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:18.741Z"
+  },
+  {
+    "timestamp": 20761,
+    "temperature": 28.87,
+    "humidity": 49.47,
+    "pressure": 1015.57,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:20.761Z"
+  },
+  {
+    "timestamp": 22771,
+    "temperature": 28.86,
+    "humidity": 49.53,
+    "pressure": 1015.60,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:22.771Z"
+  },
+  {
+    "timestamp": 24771,
+    "temperature": 28.86,
+    "humidity": 49.56,
+    "pressure": 1015.61,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:24.771Z"
+  },
+  {
+    "timestamp": 26771,
+    "temperature": 28.86,
+    "humidity": 49.53,
+    "pressure": 1015.65,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:26.771Z"
+  },
+  {
+    "timestamp": 28771,
+    "temperature": 28.86,
+    "humidity": 49.52,
+    "pressure": 1015.62,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:28.771Z"
+  },
+  {
+    "timestamp": 30771,
+    "temperature": 28.86,
+    "humidity": 49.51,
+    "pressure": 1015.57,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:30.771Z"
+  },
+  {
+    "timestamp": 32771,
+    "temperature": 28.87,
+    "humidity": 49.49,
+    "pressure": 1015.60,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:32.771Z"
+  },
+  {
+    "timestamp": 34771,
+    "temperature": 28.86,
+    "humidity": 49.50,
+    "pressure": 1015.62,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:34.771Z"
+  },
+  {
+    "timestamp": 36771,
+    "temperature": 28.87,
+    "humidity": 49.41,
+    "pressure": 1015.62,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:36.771Z"
+  },
+  {
+    "timestamp": 38771,
+    "temperature": 28.85,
+    "humidity": 49.30,
+    "pressure": 1015.61,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:38.771Z"
+  },
+  {
+    "timestamp": 40771,
+    "temperature": 28.84,
+    "humidity": 49.24,
+    "pressure": 1015.62,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:40.771Z"
+  },
+  {
+    "timestamp": 42771,
+    "temperature": 28.83,
+    "humidity": 49.31,
+    "pressure": 1015.63,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:42.771Z"
+  },
+  {
+    "timestamp": 44771,
+    "temperature": 28.82,
+    "humidity": 49.40,
+    "pressure": 1015.58,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:44.771Z"
+  },
+  {
+    "timestamp": 46771,
+    "temperature": 28.82,
+    "humidity": 49.41,
+    "pressure": 1015.63,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:46.771Z"
+  },
+  {
+    "timestamp": 48681,
+    "temperature": 28.72,
+    "humidity": 49.04,
+    "pressure": 1015.52,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:48.681Z"
+  },
+  {
+    "timestamp": 50681,
+    "temperature": 28.73,
+    "humidity": 49.10,
+    "pressure": 1015.51,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:50.681Z"
+  },
+  {
+    "timestamp": 52681,
+    "temperature": 28.72,
+    "humidity": 49.19,
+    "pressure": 1015.51,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:52.681Z"
+  },
+  {
+    "timestamp": 54681,
+    "temperature": 28.72,
+    "humidity": 49.17,
+    "pressure": 1015.55,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:54.681Z"
+  },
+  {
+    "timestamp": 56681,
+    "temperature": 28.72,
+    "humidity": 49.39,
+    "pressure": 1015.50,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:56.681Z"
+  },
+  {
+    "timestamp": 58681,
+    "temperature": 28.72,
+    "humidity": 49.54,
+    "pressure": 1015.52,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:30:58.681Z"
+  },
+  {
+    "timestamp": 60681,
+    "temperature": 28.72,
+    "humidity": 49.62,
+    "pressure": 1015.48,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:31:00.681Z"
+  },
+  {
+    "timestamp": 62681,
+    "temperature": 28.72,
+    "humidity": 49.62,
+    "pressure": 1015.52,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:31:02.681Z"
+  },
+  {
+    "timestamp": 64681,
+    "temperature": 28.72,
+    "humidity": 49.62,
+    "pressure": 1015.53,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:31:04.681Z"
+  },
+  {
+    "timestamp": 66681,
+    "temperature": 28.73,
+    "humidity": 49.53,
+    "pressure": 1015.51,
+    "sensor": "BME280",
+    "datetime": "2025-09-03T14:31:06.681Z"
+  }
+]

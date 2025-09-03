@@ -31,9 +31,7 @@ export class TokenService {
 
       const secret = JSON.parse(keypairJson);
       if (!Array.isArray(secret) || secret.length !== 64) {
-        throw new Error(
-          'Invalid SOLANA_KEYPAIR_JSON format - must be array of 64 numbers',
-        );
+        throw new Error('Invalid MINT_AUTHORITY_KEYPAIR_JSON format - must be array of 64 numbers');
       }
 
       this.payer = Keypair.fromSecretKey(Uint8Array.from(secret));

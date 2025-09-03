@@ -20,7 +20,9 @@ export class CreateListingDto {
   @IsNumber()
   expiresAt?: number | null;
 
-  // Relaxed from 64 → 128 to stop the previous error
-  @IsString() @IsNotEmpty() @MaxLength(128)
-  dekCapsuleForMxeCid!: string;
+  // Now OPTIONAL: service will verify/repair from device metadata if missing or invalid
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  dekCapsuleForMxeCid?: string;
 }

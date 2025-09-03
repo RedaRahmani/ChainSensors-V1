@@ -12,30 +12,43 @@ export class RegistryService {
     private readonly walrusService: WalrusService,
     private readonly configService: ConfigService,
   ) {
-    const cluster =
-      this.configService.get<string>('SOLANA_CLUSTER') || 'devnet';
+    // keep new version's config access (future-proof), explorer base unchanged
+    const cluster = this.configService.get<string>('SOLANA_CLUSTER') || 'devnet';
     this.explorerBase = `https://explorer.solana.com/tx`;
   }
 
   async getAllDevices() {
     const devices = await this.dpsService.listDevices();
-    return devices.map((dev) => ({
+    // enrich with name/lastSeen/latestDataCid like past version
+    return devices.map((dev: any) => ({
       deviceId: dev.deviceId,
-      metadataCid: dev.metadataCid,
+      deviceName: dev?.metadata?.deviceName ?? null,
+      metadataCid: dev.metadataCid ?? null,
+      latestDataCid: dev.latestDataCid ?? null,
+      lastSeen: dev.lastSeen ?? null,
     }));
   }
 
   async getDevice(id: string) {
-    const dev = await this.dpsService.getDevice(id);
+    const dev: any = await this.dpsService.getDevice(id);
     if (!dev) throw new NotFoundException(`Device ${id} not found`);
 
-    const metadata = await this.walrusService.getMetadata(dev.metadataCid);
+    // only fetch Walrus metadata when we actually have a CID
+    let metadata: any = null;
+    if (dev.metadataCid && typeof dev.metadataCid === 'string' && dev.metadataCid.length > 0) {
+      metadata = await this.walrusService.getMetadata(dev.metadataCid);
+    }
+
+    const nameFromDb = dev?.metadata?.deviceName;
+    const nameFromWalrus = metadata?.deviceName;
+
     return {
       deviceId: dev.deviceId,
-      metadata,
-      lastSeen: dev.lastSeen,
-      latestDataCid: dev.latestDataCid,
-      transactionLink: `${this.explorerBase}/${dev.txSignature}`,
+      deviceName: nameFromDb ?? nameFromWalrus ?? null,
+      metadata, // may be null
+      lastSeen: dev.lastSeen ?? null,
+      latestDataCid: dev.latestDataCid ?? null,
+      transactionLink: dev.txSignature ? `${this.explorerBase}/${dev.txSignature}` : null,
     };
   }
 }

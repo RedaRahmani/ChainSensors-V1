@@ -1,4 +1,3 @@
-
 "use client";
 
 import type React from "react";
@@ -17,7 +16,8 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BarChart, LineChart, PieChart } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useCreateListing } from "@/hooks/useCreateListing";
+// Commented out temporarily to isolate issues
+// import { useCreateListing } from "@/hooks/useCreateListing";
 import { useMyDevices } from "@/hooks/useMyDevices";
 import { useMyListings } from "@/hooks/useMyListings";
 import { DeviceRecord } from "@/hooks/types/device";
@@ -63,7 +63,8 @@ export default function DashboardClient() {
       const monthlyEarnings = getMonthlyEarnings(listings);
       const lastMonth = monthlyEarnings[monthlyEarnings.length - 1]?.amount || 0;
       const prevMonth = monthlyEarnings[monthlyEarnings.length - 2]?.amount || 0;
-      const growth = prevMonth > 0 ? ((lastMonth - prevMonth) / prevMonth) * 100 : 0;
+      const growth =
+        prevMonth > 0 ? ((lastMonth - prevMonth) / prevMonth) * 100 : 0;
 
       setActiveListings(activeListingsCount);
       setTotalEarnings(earnings);
@@ -72,7 +73,9 @@ export default function DashboardClient() {
     }
   }, [connected, userType, router, publicKey, listings, devices]);
 
-  function getMonthlyEarnings(listings: Listing[]): { month: string; amount: number }[] {
+  function getMonthlyEarnings(
+    listings: Listing[]
+  ): { month: string; amount: number }[] {
     const monthlyMap = listings.reduce((acc, listing) => {
       if (listing.status !== ListingStatus.Active) return acc;
       const createdAt = new Date(listing.createdAt);
@@ -85,10 +88,14 @@ export default function DashboardClient() {
       return acc;
     }, {} as Record<string, number>);
 
-    const months = [];
+    const months: { month: string; amount: number }[] = [];
     const currentDate = new Date();
     for (let i = 5; i >= 0; i--) {
-      const date = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+      const date = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth() - i,
+        1
+      );
       const month = date.toLocaleString("default", {
         month: "short",
         year: "numeric",
@@ -98,15 +105,25 @@ export default function DashboardClient() {
     return months;
   }
 
-  const deviceTypes = devices?.reduce((acc, dev) => {
-    const type = dev.metadata.dataTypes[0]?.type || "Unknown";
+  // SAFER: some devices may lack metadata or dataTypes
+  const deviceTypes = (devices ?? []).reduce((acc, dev: any) => {
+    const meta = dev?.metadata || {};
+    const typesArr = Array.isArray(meta.dataTypes) ? meta.dataTypes : [];
+    const firstType = typesArr.length > 0 ? typesArr[0]?.type : undefined;
+
+    // fallbacks: explicit metadata.type, or model, or "Unknown"
+    const type = firstType ?? meta.type ?? dev?.model ?? "Unknown";
+
     acc[type] = (acc[type] || 0) + 1;
     return acc;
   }, {} as Record<string, number>);
-  const deviceData = Object.entries(deviceTypes || {}).map(([type, count]) => ({
-    type,
-    count,
-  }));
+
+  const deviceData = Object.entries(deviceTypes || {}).map(
+    ([type, count]) => ({
+      type,
+      count,
+    })
+  );
 
   const listingStatuses = listings?.reduce(
     (acc: { [key: string]: number }, listing: Listing) => {
@@ -116,10 +133,13 @@ export default function DashboardClient() {
     },
     {} as { [key: string]: number }
   );
-  const listingsData = Object.entries(listingStatuses || {}).map(([status, count]) => ({
-    status,
-    count: count as number,
-  }));
+
+  const listingsData = Object.entries(listingStatuses || {}).map(
+    ([status, count]) => ({
+      status,
+      count: count as number,
+    })
+  );
 
   const earningsData = getMonthlyEarnings(listings || []);
 
@@ -138,7 +158,9 @@ export default function DashboardClient() {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
           <div>
             <h1 className="text-3xl font-bold">Seller Dashboard</h1>
-            <p className="text-muted-foreground">Manage your IoT devices and data listings</p>
+            <p className="text-muted-foreground">
+              Manage your IoT devices and data listings
+            </p>
           </div>
           <div className="flex gap-4 mt-4 md:mt-0">
             <Button
@@ -193,15 +215,24 @@ export default function DashboardClient() {
         {/* Tabs for Charts and Listings */}
         <Tabs defaultValue="earnings" className="w-full">
           <TabsList className="grid w-full grid-cols-3 mb-8">
-            <TabsTrigger value="earnings" className="data-[state=active]:bg-primary/20">
+            <TabsTrigger
+              value="earnings"
+              className="data-[state=active]:bg-primary/20"
+            >
               <LineChart className="mr-2 h-4 w-4" />
               Earnings
             </TabsTrigger>
-            <TabsTrigger value="devices" className="data-[state=active]:bg-secondary/20">
+            <TabsTrigger
+              value="devices"
+              className="data-[state=active]:bg-secondary/20"
+            >
               <PieChart className="mr-2 h-4 w-4" />
               Devices
             </TabsTrigger>
-            <TabsTrigger value="listings" className="data-[state=active]:bg-primary/20">
+            <TabsTrigger
+              value="listings"
+              className="data-[state=active]:bg-primary/20"
+            >
               <BarChart className="mr-2 h-4 w-4" />
               Listings
             </TabsTrigger>
@@ -211,7 +242,9 @@ export default function DashboardClient() {
             <Card>
               <CardHeader>
                 <CardTitle>Monthly Potential Earnings (usdc)</CardTitle>
-                <CardDescription>Your potential earnings over the past 6 months</CardDescription>
+                <CardDescription>
+                  Your potential earnings over the past 6 months
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="h-[300px]">
@@ -225,7 +258,9 @@ export default function DashboardClient() {
             <Card>
               <CardHeader>
                 <CardTitle>Device Distribution</CardTitle>
-                <CardDescription>Breakdown of your registered IoT devices by type</CardDescription>
+                <CardDescription>
+                  Breakdown of your registered IoT devices by type
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="h-[300px]">
@@ -239,7 +274,9 @@ export default function DashboardClient() {
             <Card>
               <CardHeader>
                 <CardTitle>Listing Status</CardTitle>
-                <CardDescription>Overview of your data listings by status</CardDescription>
+                <CardDescription>
+                  Overview of your data listings by status
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="h-[300px]">
@@ -266,7 +303,9 @@ export default function DashboardClient() {
                             <td className="p-2">{listing.deviceId}</td>
                             <td className="p-2">{listing.pricePerUnit} usdc</td>
                             <td className="p-2">{listing.totalDataUnits}</td>
-                            <td className="p-2">{ListingStatus[listing.status]}</td>
+                            <td className="p-2">
+                              {ListingStatus[listing.status]}
+                            </td>
                             <td className="p-2">
                               {new Date(listing.createdAt).toLocaleDateString()}
                             </td>
@@ -314,7 +353,12 @@ function StatsCard({
         <div className="text-2xl font-bold">{value}</div>
         <p className="text-xs text-muted-foreground">{description}</p>
         {trend !== undefined && (
-          <div className={cn("text-xs mt-2", trend >= 0 ? "text-green-500" : "text-red-500")}>
+          <div
+            className={cn(
+              "text-xs mt-2",
+              trend >= 0 ? "text-green-500" : "text-red-500"
+            )}
+          >
             {trend >= 0 ? "↑" : "↓"} {trendLabel}
           </div>
         )}
@@ -342,13 +386,18 @@ function StarIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-function EarningsChart({ data }: { data: { month: string; amount: number }[] }) {
-  const maxAmount = Math.max(...data.map((item) => item.amount), 1);
+function EarningsChart({
+  data,
+}: {
+  data: { month: string; amount: number }[];
+}) {
+  const safeData = Array.isArray(data) ? data : [];
+  const maxAmount = Math.max(...safeData.map((item) => item.amount), 1);
   return (
     <div className="w-full h-full flex flex-col">
       <div className="flex-1 flex items-end">
         <div className="w-full flex justify-between items-end h-full">
-          {data.map((item, index) => (
+          {safeData.map((item, index) => (
             <div key={index} className="flex flex-col items-center">
               <div
                 className="w-12 bg-gradient-to-t from-primary/50 to-primary rounded-t-md"
@@ -360,18 +409,23 @@ function EarningsChart({ data }: { data: { month: string; amount: number }[] }) 
         </div>
       </div>
       <div className="mt-4 text-center text-sm text-muted-foreground">
-        Total: {data.reduce((sum, item) => sum + item.amount, 0).toFixed(2)} usdc
+        Total:{" "}
+        {safeData
+          .reduce((sum, item) => sum + item.amount, 0)
+          .toFixed(2)}{" "}
+        usdc
       </div>
     </div>
   );
 }
 
 function DevicesChart({ data }: { data: { type: string; count: number }[] }) {
-  const total = data.reduce((sum, item) => sum + item.count, 0) || 1;
+  const safeData = Array.isArray(data) ? data : [];
+  const total = safeData.reduce((sum, item) => sum + item.count, 0) || 1;
   return (
     <div className="w-full h-full flex items-center justify-center">
       <div className="w-48 h-48 rounded-full relative">
-        {data.map((item, index) => {
+        {safeData.map((item, index) => {
           const percentage = (item.count / total) * 100;
           const color = index % 2 === 0 ? "bg-primary" : "bg-secondary";
           return (
@@ -392,7 +446,7 @@ function DevicesChart({ data }: { data: { type: string; count: number }[] }) {
         })}
       </div>
       <div className="ml-8">
-        {data.map((item, index) => (
+        {safeData.map((item, index) => (
           <div key={index} className="flex items-center mb-2">
             <div
               className={`w-3 h-3 rounded-full mr-2 ${
@@ -409,11 +463,16 @@ function DevicesChart({ data }: { data: { type: string; count: number }[] }) {
   );
 }
 
-function ListingsChart({ data }: { data: { status: string; count: number }[] }) {
-  const maxCount = Math.max(...data.map((item) => item.count), 1);
+function ListingsChart({
+  data,
+}: {
+  data: { status: string; count: number }[];
+}) {
+  const safeData = Array.isArray(data) ? data : [];
+  const maxCount = Math.max(...safeData.map((item) => item.count), 1);
   return (
     <div className="w-full h-full flex items-end justify-around">
-      {data.map((item, index) => (
+      {safeData.map((item, index) => (
         <div key={index} className="flex flex-col items-center">
           <div className="text-sm mb-2">{item.count}</div>
           <div

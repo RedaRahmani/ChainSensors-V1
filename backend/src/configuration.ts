@@ -12,6 +12,7 @@ export default () => ({
   //TUSKY_URL: process.env.TUSKY_URL,
   SELLER_FEE_BASIS: process.env.SELLER_FEE_BASIS,
   USDC_MINT: process.env.USDC_MINT,
+  SENSOR_MINT: process.env.SENSOR_MINT,
   MARKETPLACE_NAME: process.env.MARKETPLACE_NAME,
   CA_KEY_PATH: process.env.CA_KEY_PATH,
   CA_CERT_PATH: process.env.CA_CERT_PATH,

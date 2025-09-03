@@ -68,6 +68,25 @@ export class ListingController {
     return this.listingService.findActiveListings();
   }
 
+  @Post('expire-all')
+  @HttpCode(HttpStatus.OK)
+  async expireAllListings() {
+    this.logger.log('POST /listings/expire-all');
+    try {
+      const result = await this.listingService.expireAllActiveListings();
+      this.logger.log('expireAllListings -> OK', { result });
+      return {
+        success: true,
+        message: 'All active listings have been expired',
+        modifiedCount: result.modifiedCount,
+        matchedCount: result.matchedCount
+      };
+    } catch (error: any) {
+      this.logger.error('expireAllListings -> FAIL', { error: error.message, stack: error.stack });
+      throw new InternalServerErrorException(`Failed to expire listings: ${error.message}`);
+    }
+  }
+
   @Post('prepare-purchase')
   @HttpCode(HttpStatus.OK)
   async preparePurchase(

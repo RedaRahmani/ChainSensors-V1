@@ -63,3 +63,7 @@ broker-key.pem
 broker.csr
 keypair.json
 reda.json
+
+broker-san.cnf
+ca-cert copy.srl
+ca-cert.srl

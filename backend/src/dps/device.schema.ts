@@ -38,10 +38,11 @@ export class Device {
 
   @Prop({
     required: true,
-    enum: ['pending', 'tx-generated', 'complete'],
+    // ⬇️ keep existing states and ADD "provisioned"
+    enum: ['pending', 'tx-generated', 'provisioned', 'complete'],
     default: 'pending',
   })
-  status: 'pending' | 'tx-generated' | 'complete';
+  status: 'pending' | 'tx-generated' | 'provisioned' | 'complete';
 }
 
 export type DeviceDocument = Device & Document;

@@ -108,6 +108,131 @@
 //   };
 // }
 // hooks/useCreateListing.ts
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// "use client";
+
+// import { useWallet, useConnection } from "@solana/wallet-adapter-react";
+// import { PublicKey, Transaction } from "@solana/web3.js";
+
+// interface PrepareResponse {
+//   listingId: string;
+//   unsignedTx: string;
+// }
+
+// interface FinalizeResponse {
+//   txSignature: string;
+// }
+
+// export interface CreateListingParams {
+//   deviceId: string;
+//   dataCid: string;
+//   /** Walrus blobId of the MXE DEK capsule (string ≤ 128) */
+//   dekCapsuleForMxeCid: string;
+//   pricePerUnit: number;
+//   totalDataUnits: number;
+//   expiresAt: number | null;
+// }
+
+// const API =
+//   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3003";
+
+// /** Safe base64 <-> bytes helpers */
+// function b64ToUint8(b64: string): Uint8Array {
+//   const bin = atob(b64);
+//   const out = new Uint8Array(bin.length);
+//   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+//   return out;
+// }
+// function uint8ToB64(u8: Uint8Array): string {
+//   let s = "";
+//   for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
+//   return btoa(s);
+// }
+
+// export function useCreateListing() {
+//   const { publicKey, signTransaction } = useWallet();
+//   const { connection } = useConnection();
+
+//   return async (params: CreateListingParams): Promise<string> => {
+//     if (!publicKey) throw new Error("Wallet not connected");
+//     if (!signTransaction) throw new Error("Wallet cannot sign");
+
+//     // Validate capsule id early to avoid 400 from backend
+//     if (
+//       !params.dekCapsuleForMxeCid ||
+//       typeof params.dekCapsuleForMxeCid !== "string" ||
+//       params.dekCapsuleForMxeCid.length > 128
+//     ) {
+//       throw new Error(
+//         "dekCapsuleForMxeCid is required, must be a string, and ≤ 128 chars"
+//       );
+//     }
+
+//     // ===== Phase 1: prepare (backend builds tx) =====
+//     const prepareRes = await fetch(`${API}/listings`, {
+//       method: "POST",
+//       headers: { "Content-Type": "application/json" },
+//       body: JSON.stringify({
+//         deviceId: params.deviceId,
+//         dataCid: params.dataCid,
+//         dekCapsuleForMxeCid: params.dekCapsuleForMxeCid.trim(),
+//         pricePerUnit: params.pricePerUnit,
+//         totalDataUnits: params.totalDataUnits,
+//         expiresAt: params.expiresAt,
+//         sellerPubkey: publicKey.toBase58(),
+//       }),
+//     });
+
+//     if (!prepareRes.ok) {
+//       const text = await prepareRes.text();
+//       throw new Error(`Prepare listing failed: ${prepareRes.status} ${text}`);
+//     }
+
+//     const { listingId, unsignedTx }: PrepareResponse =
+//       await prepareRes.json();
+
+//     // Deserialize & refresh blockhash (Phantom-friendly)
+//     const tx = Transaction.from(b64ToUint8(unsignedTx));
+//     if (!tx.feePayer) tx.feePayer = new PublicKey(publicKey);
+//     const { blockhash } = await connection.getLatestBlockhash("confirmed");
+//     tx.recentBlockhash = blockhash;
+
+//     // ===== Phase 2: user signs in wallet =====
+//     const signed = await signTransaction(tx);
+//     const signedBase64 = uint8ToB64(signed.serialize());
+
+//     // ===== Phase 3: finalize (backend broadcasts & confirms) =====
+//     const finalizeRes = await fetch(`${API}/listings/finalize`, {
+//       method: "POST",
+//       headers: { "Content-Type": "application/json" },
+//       body: JSON.stringify({ listingId, signedTx: signedBase64 }),
+//     });
+
+//     if (!finalizeRes.ok) {
+//       const text = await finalizeRes.text();
+//       throw new Error(`Finalize listing failed: ${finalizeRes.status} ${text}`);
+//     }
+
+//     const { txSignature }: FinalizeResponse = await finalizeRes.json();
+//     return txSignature;
+//   };
+// }
+
+
+
 "use client";
 
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
@@ -117,7 +242,6 @@ interface PrepareResponse {
   listingId: string;
   unsignedTx: string;
 }
-
 interface FinalizeResponse {
   txSignature: string;
 }
@@ -125,17 +249,17 @@ interface FinalizeResponse {
 export interface CreateListingParams {
   deviceId: string;
   dataCid: string;
-  /** Walrus blobId of the MXE DEK capsule (string ≤ 128) */
-  dekCapsuleForMxeCid: string;
   pricePerUnit: number;
   totalDataUnits: number;
+  /** seconds since epoch, or null */
   expiresAt: number | null;
 }
 
 const API =
-  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3003";
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  "http://localhost:3003";
 
-/** Safe base64 <-> bytes helpers */
 function b64ToUint8(b64: string): Uint8Array {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
@@ -148,6 +272,18 @@ function uint8ToB64(u8: Uint8Array): string {
   return btoa(s);
 }
 
+async function primeMetadataCid(deviceId: string) {
+  const res = await fetch(`${API}/dps/device/${encodeURIComponent(deviceId)}/metadata/prime`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Prime metadata failed: ${res.status} ${txt}`);
+  }
+  return res.json();
+}
+
 export function useCreateListing() {
   const { publicKey, signTransaction } = useWallet();
   const { connection } = useConnection();
@@ -156,55 +292,61 @@ export function useCreateListing() {
     if (!publicKey) throw new Error("Wallet not connected");
     if (!signTransaction) throw new Error("Wallet cannot sign");
 
-    // Validate capsule id early to avoid 400 from backend
-    if (
-      !params.dekCapsuleForMxeCid ||
-      typeof params.dekCapsuleForMxeCid !== "string" ||
-      params.dekCapsuleForMxeCid.length > 128
-    ) {
-      throw new Error(
-        "dekCapsuleForMxeCid is required, must be a string, and ≤ 128 chars"
-      );
+    // Narrow type for TS: after the guard above, non-null here
+    const pk: PublicKey = publicKey;
+
+    async function prepareOnce(): Promise<PrepareResponse> {
+      const prepareRes = await fetch(`${API}/listings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deviceId: params.deviceId,
+          dataCid: params.dataCid,
+          pricePerUnit: params.pricePerUnit,
+          totalDataUnits: params.totalDataUnits,
+          expiresAt: params.expiresAt,
+          sellerPubkey: pk.toBase58(),
+          // no dekCapsuleForMxeCid – backend derives/repairs it using metadataCid
+        }),
+      });
+
+      if (!prepareRes.ok) {
+        const text = await prepareRes.text();
+        throw new Error(`Prepare listing failed: ${prepareRes.status} ${text}`);
+      }
+      return prepareRes.json();
     }
 
-    // ===== Phase 1: prepare (backend builds tx) =====
-    const prepareRes = await fetch(`${API}/listings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        deviceId: params.deviceId,
-        dataCid: params.dataCid,
-        dekCapsuleForMxeCid: params.dekCapsuleForMxeCid.trim(),
-        pricePerUnit: params.pricePerUnit,
-        totalDataUnits: params.totalDataUnits,
-        expiresAt: params.expiresAt,
-        sellerPubkey: publicKey.toBase58(),
-      }),
-    });
+    let prep: PrepareResponse | null = null;
 
-    if (!prepareRes.ok) {
-      const text = await prepareRes.text();
-      throw new Error(`Prepare listing failed: ${prepareRes.status} ${text}`);
+    try {
+      prep = await prepareOnce();
+    } catch (e: any) {
+      const msg = String(e?.message || "");
+      if (msg.includes("has no metadataCid")) {
+        await primeMetadataCid(params.deviceId);
+        prep = await prepareOnce();
+      } else {
+        throw e;
+      }
     }
 
-    const { listingId, unsignedTx }: PrepareResponse =
-      await prepareRes.json();
+    if (!prep) throw new Error("Prepare listing failed");
 
-    // Deserialize & refresh blockhash (Phantom-friendly)
-    const tx = Transaction.from(b64ToUint8(unsignedTx));
-    if (!tx.feePayer) tx.feePayer = new PublicKey(publicKey);
+    // Deserialize & refresh recent blockhash (wallet UX)
+    const tx = Transaction.from(b64ToUint8(prep.unsignedTx));
+    if (!tx.feePayer) tx.feePayer = new PublicKey(pk);
     const { blockhash } = await connection.getLatestBlockhash("confirmed");
     tx.recentBlockhash = blockhash;
 
-    // ===== Phase 2: user signs in wallet =====
+    // Sign and finalize
     const signed = await signTransaction(tx);
     const signedBase64 = uint8ToB64(signed.serialize());
 
-    // ===== Phase 3: finalize (backend broadcasts & confirms) =====
     const finalizeRes = await fetch(`${API}/listings/finalize`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ listingId, signedTx: signedBase64 }),
+      body: JSON.stringify({ listingId: prep.listingId, signedTx: signedBase64 }),
     });
 
     if (!finalizeRes.ok) {

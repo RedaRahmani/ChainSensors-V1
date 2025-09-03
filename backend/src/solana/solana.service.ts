@@ -54,6 +54,117 @@ export class SolanaService {
     this.program = new anchor.Program(idl as Idl, this.provider);
   }
 
+  // ——— PDA Helper Methods ———
+  private getMarketplaceAdminFromConfig(): PublicKey {
+    const admin = this.configService.get<string>('MARKETPLACE_ADMIN_PUBKEY');
+    if (!admin) throw new Error('MARKETPLACE_ADMIN_PUBKEY missing');
+    return new PublicKey(admin);
+  }
+
+  public getDeviceRegistryPda(deviceId: string): { marketplacePda: PublicKey; deviceRegistryPda: PublicKey; admin: PublicKey } {
+    const admin = this.getMarketplaceAdminFromConfig();
+    const pid = this.program.programId;
+    const [marketplacePda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('marketplace'), admin.toBuffer()],
+      pid,
+    );
+    const [deviceRegistryPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('device'), marketplacePda.toBuffer(), Buffer.from(deviceId)],
+      pid,
+    );
+    return { marketplacePda, deviceRegistryPda, admin };
+  }
+
+  public async deviceRegistryExists(deviceId: string): Promise<boolean> {
+    const { deviceRegistryPda } = this.getDeviceRegistryPda(deviceId);
+    const info = await this.provider.connection.getAccountInfo(deviceRegistryPda, 'confirmed');
+    this.logger.log('deviceRegistryExists()', {
+      deviceId,
+      deviceRegistryPda: deviceRegistryPda.toBase58(),
+      exists: !!info,
+    });
+    return !!info;
+  }
+
+  // Optional: throw with friendly message used by services/controllers
+  public async assertDeviceRegisteredOrThrow(deviceId: string): Promise<void> {
+    const ok = await this.deviceRegistryExists(deviceId);
+    if (!ok) {
+      const { marketplacePda, deviceRegistryPda, admin } = this.getDeviceRegistryPda(deviceId);
+      const msg = `Device ${deviceId} is not registered on-chain for marketplace ${marketplacePda.toBase58()} (admin ${admin.toBase58()}). Register the device first, then create a listing. (missing PDA: ${deviceRegistryPda.toBase58()})`;
+      this.logger.error(msg);
+      throw new Error(msg);
+    }
+  }
+
+  // Admin pubkey helper (used by DPS service)
+public adminPubkeyBase58() {
+  return this.provider.wallet.publicKey.toBase58();
+}
+
+/**
+ * Admin-signed device registration (hardware self-enroll).
+ * Mirrors the same registerDevice() fields but sends the tx with the backend's signer.
+ */
+async registerDeviceAuto(args: {
+  deviceId: string;
+  ekPubkeyHash: number[];
+  deviceType: string;
+  location: string;
+  dataType: string;
+  dataUnit: string;
+  pricePerUnit: number;
+  totalDataUnits: number;
+  dataCid: string;
+  accessKeyHash: number[];
+  expiresAt: number | null;
+}): Promise<string> {
+  const owner = this.provider.wallet.publicKey; // admin signs
+  const programId = this.program.programId;
+  const marketplaceAdmin = this.getMarketplaceAdminFromConfig();
+
+  const [marketplacePda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('marketplace'), marketplaceAdmin.toBuffer()],
+    programId,
+  );
+  const [deviceRegistryPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('device'), marketplacePda.toBuffer(), Buffer.from(args.deviceId)],
+    programId,
+  );
+
+  try {
+    const sig = await this.program.methods
+      .registerDevice(
+        args.deviceId,
+        Uint8Array.from(args.ekPubkeyHash) as any,
+        args.deviceType,
+        args.location,
+        args.dataType,
+        args.dataUnit,
+        new BN(args.pricePerUnit),
+        new BN(args.totalDataUnits),
+        args.dataCid,
+        Uint8Array.from(args.accessKeyHash) as any,
+        args.expiresAt ? new BN(args.expiresAt) : null,
+      )
+      .accounts({
+        owner, // signer = admin
+        marketplace: marketplacePda,
+        deviceRegistry: deviceRegistryPda,
+        systemProgram: SystemProgram.programId,
+        rent: SYSVAR_RENT_PUBKEY,
+      })
+      .rpc({ commitment: 'confirmed' });
+
+    this.logger.log(`registerDeviceAuto ok: ${sig}`);
+    return sig;
+  } catch (e: any) {
+    await this.logErrorWithOnchainLogs(e, 'registerDeviceAuto');
+    throw e;
+  }
+}
+
+
   // ——— utils ———
   private toBytes32(input: Bytes32, label = 'bytes32'): Uint8Array {
     let bytes: Uint8Array;
@@ -220,10 +331,16 @@ export class SolanaService {
     marketplaceAdmin: PublicKey,
     sellerPubkey: PublicKey,
   ): Promise<{ unsignedTx: string }> {
+    // Validate marketplace admin matches config
+    const configAdmin = this.getMarketplaceAdminFromConfig();
+    if (!configAdmin.equals(marketplaceAdmin)) {
+      throw new Error(`MARKETPLACE_ADMIN_PUBKEY mismatch. Config=${configAdmin.toBase58()} Param=${marketplaceAdmin.toBase58()}`);
+    }
+
     const programId = this.program.programId;
 
     const [marketplacePda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('marketplace'), marketplaceAdmin.toBuffer()],
+      [Buffer.from('marketplace'), configAdmin.toBuffer()],
       programId,
     );
     const [deviceRegistryPda] = PublicKey.findProgramAddressSync(
@@ -300,7 +417,7 @@ export class SolanaService {
     } = args;
 
     const pid = this.program.programId;
-    const marketplaceAdmin = new PublicKey(this.configService.get<string>('MARKETPLACE_ADMIN_PUBKEY')!);
+    const marketplaceAdmin = this.getMarketplaceAdminFromConfig();
     const idBuf = Buffer.from(listingId, 'utf8');
 
     const [marketplacePda] = PublicKey.findProgramAddressSync(
@@ -315,6 +432,16 @@ export class SolanaService {
       [Buffer.from('listing'), deviceRegistryPda.toBuffer(), idBuf],
       pid,
     );
+
+    // Log PDAs for debugging
+    this.logger.log('createListing PDAs', {
+      marketplaceAdmin: marketplaceAdmin.toBase58(),
+      listingId,
+      deviceId,
+      marketplacePda: marketplacePda.toBase58(),
+      deviceRegistryPda: deviceRegistryPda.toBase58(),
+      listingStatePda: listingStatePda.toBase58(),
+    });
 
     const builder = this.program.methods
       .createListing(
