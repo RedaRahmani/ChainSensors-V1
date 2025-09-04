@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
-import { Listing, ListingStatus } from "@/hooks/types/listing";
+import { Listing } from "@/hooks/types/listing";
+
+const API_ROOT = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3003";
 
 export function useActiveListings() {
   const [listings, setListings] = useState<Listing[]>([]);
@@ -12,13 +14,12 @@ export function useActiveListings() {
         setIsLoading(true);
         setIsError(false);
 
-        const response = await fetch("http://localhost:3003/listings/active", {
+        const response = await fetch(`${API_ROOT.replace(/\/$/, "")}/listings/active`, {
           method: "GET",
           headers: { "Content-Type": "application/json" },
         });
 
-        if (!response.ok) throw new Error("Failed to fetch active listings");
-
+        if (!response.ok) throw new Error(`Failed to fetch active listings: ${response.status}`);
         const data: Listing[] = await response.json();
         setListings(data);
       } catch (error) {

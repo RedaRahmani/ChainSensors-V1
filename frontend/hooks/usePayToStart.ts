@@ -4,9 +4,9 @@ import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { PublicKey, Transaction } from "@solana/web3.js";
 
 const API =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_BACKEND_URL ||
-  "http://localhost:3003";
+  (process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    "http://localhost:3003").replace(/\/$/, "");
 
 function b64ToU8(b64: string) {
   const bin = atob(b64);
@@ -42,7 +42,7 @@ export function usePayToStart() {
     if (!intentRes.ok) throw new Error(await intentRes.text());
     const { orderId, unsignedTxB64 } = await intentRes.json();
 
-    // 2) sign locally (refresh blockhash for Phantom)
+    // 2) sign locally
     const tx = Transaction.from(b64ToU8(unsignedTxB64));
     if (!tx.feePayer) tx.feePayer = new PublicKey(publicKey);
     const { blockhash } = await connection.getLatestBlockhash("confirmed");

@@ -1,9 +1,9 @@
 "use client";
 
 const API =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_BACKEND_URL ||
-  "http://localhost:3003";
+  (process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    "http://localhost:3003").replace(/\/$/, "");
 
 /** Update metadata.deviceName for a device (stored server-side) */
 export function useRenameDevice() {

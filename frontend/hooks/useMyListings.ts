@@ -1,8 +1,7 @@
-
 import useSWR from 'swr';
 import { Listing } from './types/listing';
 
-const API_ROOT = process.env.NEXT_PUBLIC_API_ROOT || 'http://localhost:3003';
+const API_ROOT = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003';
 
 async function fetcher([url, sellerPubkey]: [string, string]) {
   const res = await fetch(url, {
@@ -19,16 +18,12 @@ async function fetcher([url, sellerPubkey]: [string, string]) {
 
 export function useMyListings(sellerPubkey: string | null) {
   const shouldFetch = Boolean(sellerPubkey);
-  const endpoint = `${API_ROOT}/listings/by-seller`;
+  const endpoint = `${API_ROOT.replace(/\/$/, '')}/listings/by-seller`;
 
   const { data, error, mutate } = useSWR<Listing[]>(
     shouldFetch ? [endpoint, sellerPubkey!] : null,
     fetcher,
-    {
-      revalidateOnFocus: false,
-      revalidateOnReconnect: true,
-      dedupingInterval: 5000,
-    }
+    { revalidateOnFocus: false, revalidateOnReconnect: true, dedupingInterval: 5000 }
   );
 
   return {

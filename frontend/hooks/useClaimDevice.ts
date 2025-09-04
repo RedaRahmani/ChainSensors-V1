@@ -3,9 +3,9 @@
 import { useWallet } from "@solana/wallet-adapter-react";
 
 const API =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_BACKEND_URL ||
-  "http://localhost:3003";
+  (process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    "http://localhost:3003").replace(/\/$/, "");
 
 export function useClaimDevice() {
   const { publicKey } = useWallet();
@@ -18,7 +18,7 @@ export function useClaimDevice() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         deviceId,
-        code, // same as PoP
+        code,
         sellerPubkey: publicKey.toString(),
       }),
     });

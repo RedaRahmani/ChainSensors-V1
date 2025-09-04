@@ -19,7 +19,10 @@ interface PurchaseListingHook {
   purchaseIndex: number | null;
 }
 
-const API = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3003";
+const API =
+  (process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    "http://localhost:3003").replace(/\/$/, "");
 
 function u8ToB64(u8: Uint8Array): string {
   let s = "";
@@ -64,7 +67,6 @@ export function usePurchaseListing(): PurchaseListingHook {
       try {
         const nacl: typeof naclType = (await import("tweetnacl")).default;
         const eph = nacl.box.keyPair();
-        console.debug("[preparePurchase] eph.publicKey", eph.publicKey);
 
         const response = await fetch(`${API}/listings/prepare-purchase`, {
           method: "POST",
@@ -78,12 +80,8 @@ export function usePurchaseListing(): PurchaseListingHook {
         });
 
         const text = await response.text();
-        if (!response.ok) {
-          console.error("[preparePurchase] backend error:", text);
-          throw new Error(text || "Failed to prepare purchase");
-        }
+        if (!response.ok) throw new Error(text || "Failed to prepare purchase");
         const json = text ? JSON.parse(text) : {};
-        console.debug("[preparePurchase] backend json:", json);
 
         const uTx: string | undefined = json?.unsignedTx;
         const pIdx: number | undefined = json?.purchaseIndex;
@@ -100,7 +98,6 @@ export function usePurchaseListing(): PurchaseListingHook {
         try {
           const key = `ephSk:${listingId}:${pIdx}`;
           localStorage.setItem(key, u8ToB64(eph.secretKey));
-          console.debug("[preparePurchase] stored eph secret at", key);
         } catch {}
       } catch (err: any) {
         setError(err?.message || "Failed to prepare purchase");
@@ -116,15 +113,13 @@ export function usePurchaseListing(): PurchaseListingHook {
   );
 
   const finalizePurchase = useCallback(
-    async (listingId: string, unitsRequested: number) => {
+    async (listingId: string, _unitsRequested: number) => {
       if (!publicKey || !signTransaction) {
         throw new Error("Wallet not connected or unable to sign");
       }
 
       const uTx = unsignedTxRef.current;
-      if (!uTx) {
-        throw new Error("No transaction to finalize");
-      }
+      if (!uTx) throw new Error("No transaction to finalize");
 
       setIsFinalizing(true);
       setError(null);
@@ -137,7 +132,6 @@ export function usePurchaseListing(): PurchaseListingHook {
 
         const signedTx = await signTransaction(tx);
         const signedTxBase64 = u8ToB64(signedTx.serialize());
-        console.debug("[finalizePurchase] sending signedTx len", signedTxBase64.length);
 
         const response = await fetch(`${API}/listings/finalize-purchase`, {
           method: "POST",
@@ -145,18 +139,13 @@ export function usePurchaseListing(): PurchaseListingHook {
           body: JSON.stringify({
             listingId,
             signedTx: signedTxBase64,
-            unitsRequested,
+            unitsRequested: _unitsRequested,
           }),
         });
 
         const text = await response.text();
-        if (!response.ok) {
-          console.error("[finalizePurchase] backend error", text);
-          throw new Error(text || "Failed to finalize purchase");
-        }
-
+        if (!response.ok) throw new Error(text || "Failed to finalize purchase");
         const result = text ? JSON.parse(text) : {};
-        console.debug("[finalizePurchase] result", result);
         return result as PurchaseResult;
       } catch (err: any) {
         setError(err?.message || "Failed to finalize purchase");

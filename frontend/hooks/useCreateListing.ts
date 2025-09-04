@@ -231,8 +231,6 @@
 //   };
 // }
 
-
-
 "use client";
 
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
@@ -256,9 +254,9 @@ export interface CreateListingParams {
 }
 
 const API =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_BACKEND_URL ||
-  "http://localhost:3003";
+  (process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    "http://localhost:3003").replace(/\/$/, "");
 
 function b64ToUint8(b64: string): Uint8Array {
   const bin = atob(b64);
@@ -273,10 +271,10 @@ function uint8ToB64(u8: Uint8Array): string {
 }
 
 async function primeMetadataCid(deviceId: string) {
-  const res = await fetch(`${API}/dps/device/${encodeURIComponent(deviceId)}/metadata/prime`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  });
+  const res = await fetch(
+    `${API}/dps/device/${encodeURIComponent(deviceId)}/metadata/prime`,
+    { method: "POST", headers: { "Content-Type": "application/json" } }
+  );
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(`Prime metadata failed: ${res.status} ${txt}`);
@@ -292,7 +290,6 @@ export function useCreateListing() {
     if (!publicKey) throw new Error("Wallet not connected");
     if (!signTransaction) throw new Error("Wallet cannot sign");
 
-    // Narrow type for TS: after the guard above, non-null here
     const pk: PublicKey = publicKey;
 
     async function prepareOnce(): Promise<PrepareResponse> {
@@ -306,7 +303,6 @@ export function useCreateListing() {
           totalDataUnits: params.totalDataUnits,
           expiresAt: params.expiresAt,
           sellerPubkey: pk.toBase58(),
-          // no dekCapsuleForMxeCid – backend derives/repairs it using metadataCid
         }),
       });
 
@@ -333,13 +329,11 @@ export function useCreateListing() {
 
     if (!prep) throw new Error("Prepare listing failed");
 
-    // Deserialize & refresh recent blockhash (wallet UX)
     const tx = Transaction.from(b64ToUint8(prep.unsignedTx));
     if (!tx.feePayer) tx.feePayer = new PublicKey(pk);
     const { blockhash } = await connection.getLatestBlockhash("confirmed");
     tx.recentBlockhash = blockhash;
 
-    // Sign and finalize
     const signed = await signTransaction(tx);
     const signedBase64 = uint8ToB64(signed.serialize());
 

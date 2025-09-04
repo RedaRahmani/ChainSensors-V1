@@ -1,16 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useWalletContext } from "@/components/wallet-context-provider";
 
-const API = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3003";
+const API =
+  (process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    "http://localhost:3003").replace(/\/$/, "");
 
 export type PurchaseRow = {
   recordPk: string;
   buyer: string;
   units: number;
   purchaseIndex?: number | null;
-  createdAt?: number | null; // unix (ms or s, best effort)
+  createdAt?: number | null; // unix (ms or s)
   dekCapsuleForBuyerCid?: string | null;
   txSignature?: string | null;
 
@@ -19,7 +22,7 @@ export type PurchaseRow = {
   deviceId?: string | null;
   dataCid?: string | null;
   pricePerUnit?: number | null;
-  expiresAt?: number | null; // unix seconds (expected)
+  expiresAt?: number | null; // unix seconds
   seller?: string | null;
   deviceMetadata?: any | null;
 };
@@ -38,9 +41,10 @@ export function useMyPurchases() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`${API}/purchases/buyer/${publicKey}`, {
-          cache: "no-store",
-        });
+        const res = await fetch(
+          `${API}/purchases/buyer/${encodeURIComponent(publicKey)}`,
+          { cache: "no-store" }
+        );
         if (!res.ok) throw new Error(await res.text());
         const { purchases } = (await res.json()) as { purchases: PurchaseRow[] };
         if (!cancelled) setData(purchases || []);
@@ -61,7 +65,6 @@ export function useMyPurchases() {
 
 export function unixToISO(ts?: number | null) {
   if (!ts) return null;
-  // Some programs store seconds, some ms. Heuristic:
   const ms = ts < 10_000_000_000 ? ts * 1000 : ts;
   return new Date(ms).toISOString();
 }
