@@ -1,7 +1,13 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { IngestService } from '../src/ingest/ingest.service';
 import * as mqtt from 'mqtt';
-import * as fs from 'fs';
+
+function envPem(name: string) {
+  const v = process.env[name];
+  if (!v) return undefined;
+  // accept both real newlines (Render supports multi-line) or \n-escaped
+  return Buffer.from(v.replace(/\\n/g, '\n'), 'utf8');
+}
 
 @Injectable()
 export class MqttIngestService implements OnModuleInit, OnModuleDestroy {
@@ -11,20 +17,30 @@ export class MqttIngestService implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly ingest: IngestService) {}
 
   onModuleInit() {
-    const url = process.env.BROKER_URL || 'mqtts://localhost:8883';
-    const clientId = process.env.MQTT_CLIENT_ID || `backend-${Math.random().toString(16).slice(2)}`;
+    const url =
+      process.env.BROKER_URL || 'mqtts://localhost:8883';
 
-    const caPath   = process.env.MQTT_CA_PATH   || process.env.CA_CERT_PATH;
-    const certPath = process.env.MQTT_CERT_PATH || '';
-    const keyPath  = process.env.MQTT_KEY_PATH  || '';
+    const clientId =
+      process.env.MQTT_CLIENT_ID || `backend-${Math.random().toString(16).slice(2)}`;
 
     const opts: mqtt.IClientOptions = {
       clientId,
       clean: true,
       reconnectPeriod: 2000,
       keepalive: 30,
-      rejectUnauthorized: true,
-      will: {               // optional LWT for backend presence
+      // set MQTT_TLS_INSECURE=1 only if you must connect to self-signed broker without CA
+      rejectUnauthorized: process.env.MQTT_TLS_INSECURE === '1' ? false : true,
+
+      // Managed brokers (EMQX/HiveMQ Cloud)
+      username: process.env.MQTT_USERNAME,
+      password: process.env.MQTT_PASSWORD,
+
+      // Optional client TLS (self-hosted brokers)
+      ca: envPem('MQTT_CA_PEM'),
+      cert: envPem('MQTT_CERT_PEM'),
+      key: envPem('MQTT_KEY_PEM'),
+
+      will: {
         topic: `system/clients/${clientId}/status`,
         payload: 'offline',
         qos: 1,
@@ -32,19 +48,23 @@ export class MqttIngestService implements OnModuleInit, OnModuleDestroy {
       },
     };
 
-    if (caPath && fs.existsSync(caPath))   opts.ca   = fs.readFileSync(caPath);
-    if (certPath && keyPath && fs.existsSync(certPath) && fs.existsSync(keyPath)) {
-      opts.cert = fs.readFileSync(certPath);
-      opts.key  = fs.readFileSync(keyPath);
-    }
-
     this.client = mqtt.connect(url, opts);
+
     this.client.on('connect', () => {
       this.logger.log(`MQTT connected: ${url} (id=${clientId})`);
-      this.client!.publish(`system/clients/${clientId}/status`, 'online', { qos: 1, retain: true });
-      this.client!.subscribe(['cs/+/bme280', 'devices/+/data'], { qos: 1 }, (err) => {
+      this.client!.publish(`system/clients/${clientId}/status`, 'online', {
+        qos: 1,
+        retain: true,
+      });
+
+      const topics = (process.env.MQTT_TOPICS || 'cs/+/bme280,devices/+/data')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      this.client!.subscribe(topics, { qos: 1 }, (err) => {
         if (err) this.logger.error('Subscribe error', err);
-        else this.logger.log('Subscribed to cs/+/bme280 and devices/+/data');
+        else this.logger.log(`Subscribed to ${topics.join(', ')}`);
       });
     });
 
@@ -52,18 +72,25 @@ export class MqttIngestService implements OnModuleInit, OnModuleDestroy {
       try {
         const parts = topic.split('/');
         let deviceId: string | null = null;
+
         if (parts.length >= 3 && parts[0] === 'cs' && parts[2] === 'bme280') deviceId = parts[1];
         if (parts.length >= 3 && parts[0] === 'devices' && parts[2] === 'data') deviceId = parts[1];
         if (!deviceId) return;
 
         let obj: any;
-        try { obj = JSON.parse(message.toString()); } catch { obj = { raw: message.toString('base64') }; }
+        try {
+          obj = JSON.parse(message.toString());
+        } catch {
+          obj = { raw: message.toString('base64') };
+        }
         obj.ts = obj.ts || Date.now();
 
-        // encrypt + store, updates lastSeen for us
-        const { payloadCid } = await this.ingest.encryptAndStore(deviceId, JSON.stringify(obj));
+        const { payloadCid } = await this.ingest.encryptAndStore(
+          deviceId,
+          JSON.stringify(obj),
+        );
         this.logger.debug(`ingested ${deviceId} -> ${payloadCid}`);
-      } catch (e:any) {
+      } catch (e: any) {
         this.logger.warn(`MQTT message handling failed: ${e?.message}`);
       }
     });
@@ -72,5 +99,9 @@ export class MqttIngestService implements OnModuleInit, OnModuleDestroy {
     this.client.on('close', () => this.logger.warn('MQTT connection closed'));
   }
 
-  onModuleDestroy() { try { this.client?.end(true); } catch {} }
+  onModuleDestroy() {
+    try {
+      this.client?.end(true);
+    } catch {}
+  }
 }
