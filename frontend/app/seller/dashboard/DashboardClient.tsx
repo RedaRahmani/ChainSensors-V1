@@ -164,10 +164,10 @@ export default function DashboardClient() {
           </div>
           <div className="flex gap-4 mt-4 md:mt-0">
             <Button
-              onClick={() => router.push("/seller/devices/register")}
+              onClick={() => router.push("/seller/devices")}
               className="bg-primary hover:bg-primary/90"
             >
-              Register Device
+              Create Device
             </Button>
             <Button
               onClick={() => router.push("/seller/listings")}

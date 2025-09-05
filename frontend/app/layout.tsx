@@ -4,7 +4,7 @@ import type { Metadata } from "next"
 import { Inter } from "next/font/google"
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
-import { Providers } from "./providers"      // ← import the client wrapper
+import { Providers } from "./providers"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -13,6 +13,9 @@ export const metadata: Metadata = {
   description:
     "A pioneering decentralized IoT data marketplace powered by the Solana blockchain",
   generator: "v0.dev",
+  verification: {
+    google: "G8F5jGbtluf_0mrU9FwKbGxK0u7wtbgYyYW4Js81ZiM",
+  },
 }
 
 export default function RootLayout({
