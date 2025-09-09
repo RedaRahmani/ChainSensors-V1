@@ -22,8 +22,7 @@ anchor-debug = []
 [dependencies]
 anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
 anchor-spl = "0.31.1"
-arcium-anchor = "0.2.0"
-arcium-macros = "0.2.0"
-#arcium-client = { version = "0.2", default-features = false, features = ["anchor-client"] }
 uuid          = { version = "1.8", default-features = false, features = ["v5"] }
-arcium-client = { default-features = false, version = "0.2.0" }
+arcium-client = { version = "0.3.0", default-features = false }
+arcium-macros = { version = "0.3.0" }
+arcium-anchor = { version = "0.3.0" }
