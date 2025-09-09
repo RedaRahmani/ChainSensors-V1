@@ -25,4 +25,4 @@ anchor-spl = "0.31.1"
 uuid          = { version = "1.8", default-features = false, features = ["v5"] }
 arcium-client = { version = "0.3.0", default-features = false }
 arcium-macros = { version = "0.3.0" }
-arcium-anchor = { version = "0.3.0" }
+arcium-anchor = { version = "=0.3.1" }

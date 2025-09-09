@@ -260,8 +260,18 @@ pub mod chain_sensors {
             CallbackAccount { pubkey: listing_key,   is_writable: false },
             CallbackAccount { pubkey: dq_state_pda,  is_writable: true  },
         ];
-
-        queue_computation(ctx.accounts, computation_offset, args, cb_accs, None)?;
+         ctx.accounts.sign_pda_account.bump = ctx.bumps.sign_pda_account;
+         
+        queue_computation(
+            ctx.accounts,
+            computation_offset,
+            args,
+            None, // new API: 4th arg is Option<Vec<CallbackAccount>> (leave None)
+            vec![ComputeAccuracyScoreCallback::callback_ix(&[
+                CallbackAccount { pubkey: device_key,  is_writable: false },
+                CallbackAccount { pubkey: listing_key, is_writable: false },
+            ])],
+        )?;
         Ok(())
     }
 
@@ -347,9 +357,9 @@ pub mod chain_sensors {
             _ => return Err(ErrorCode::AbortedComputation.into()),
         };
 
-        emit!(ResealOutput {
-            listing:  ctx.accounts.listing_state,
-            record:   ctx.accounts.purchase_record,
+                emit!(ResealOutput {
+            listing:  ctx.accounts.listing_state.key(),
+            record:   ctx.accounts.purchase_record.key(),
             encryption_key: o.encryption_key,
             nonce: o.nonce.to_le_bytes(),
             c0: o.ciphertexts[0],
@@ -384,6 +394,18 @@ pub struct InitResealDekCompDef<'info> {
 pub struct ResealDek<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
+
+    // NEW: required by arcium macros since 0.3.x
+    #[account(
+        init_if_needed,
+        space = 9,
+        payer = payer,
+        seeds = [&SIGN_PDA_SEED],
+        bump,
+        address = derive_sign_pda!(),
+    )]
+    pub sign_pda_account: Account<'info, SignerAccount>,
+
     #[account(address = derive_mxe_pda!())]
     pub mxe_account: Account<'info, MXEAccount>,
     #[account(mut, address = derive_mempool_pda!())]
@@ -404,6 +426,7 @@ pub struct ResealDek<'info> {
     /// CHECK: pointer-only
     pub listing_state: UncheckedAccount<'info>,
     /// CHECK: pointer-only
+    #[account(mut)]
     pub purchase_record: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,
@@ -436,6 +459,18 @@ pub struct ResealDekCallback<'info> {
 pub struct ComputeAccuracyScore<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
+
+    // NEW: required sign PDA
+    #[account(
+        init_if_needed,
+        space = 9,
+        payer = payer,
+        seeds = [&SIGN_PDA_SEED],
+        bump,
+        address = derive_sign_pda!(),
+    )]
+    pub sign_pda_account: Account<'info, SignerAccount>,
+
     #[account(address = derive_mxe_pda!())]
     pub mxe_account: Account<'info, MXEAccount>,
     #[account(mut, address = derive_mempool_pda!())]
@@ -453,7 +488,6 @@ pub struct ComputeAccuracyScore<'info> {
     #[account(address = ARCIUM_CLOCK_ACCOUNT_ADDRESS)]
     pub clock_account: Account<'info, ClockAccount>,
 
-    // Job PDA (stores nonce/metadata)
     #[account(
         init_if_needed,
         payer = payer,
@@ -471,6 +505,7 @@ pub struct ComputeAccuracyScore<'info> {
     pub system_program: Program<'info, System>,
     pub arcium_program: Program<'info, Arcium>,
 }
+
 
 
 #[callback_accounts("compute_accuracy_score")]

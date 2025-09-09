@@ -8,7 +8,7 @@ use arcium_client::idl::arcium::types::CallbackAccount;
 use crate::ErrorCode;
 
 pub fn handler(
-    ctx: Context<crate::ResealDek>, // fully qualify to avoid fragile import
+    ctx: Context<crate::ResealDek>,
     computation_offset: u64,
     nonce: u128,
     buyer_x25519_pubkey: [u8; 32],
@@ -18,9 +18,6 @@ pub fn handler(
     c2: [u8; 32],
     c3: [u8; 32],
 ) -> Result<()> {
-    //require!(computation_offset != 0, ErrorCode::ClusterNotSet);
-
-
     let args = vec![
         Argument::PlaintextU128(nonce),
         Argument::EncryptedU64(c0),
@@ -30,12 +27,18 @@ pub fn handler(
         Argument::ArcisPubkey(buyer_x25519_pubkey),
     ];
 
-    // Must match ResealDekCallback custom account order; record writable.
-    let cb_accounts = vec![
-        CallbackAccount { pubkey: ctx.accounts.listing_state.key(),  is_writable: false },
-        CallbackAccount { pubkey: ctx.accounts.purchase_record.key(), is_writable: true  },
-    ];
+    // Required since 0.3.x
+    ctx.accounts.sign_pda_account.bump = ctx.bumps.sign_pda_account;
 
-    queue_computation(ctx.accounts, computation_offset, args, cb_accounts, None)?;
+    queue_computation(
+        ctx.accounts,
+        computation_offset,
+        args,
+        None, // 4th arg: Option<Vec<CallbackAccount>> — leave None
+        vec![crate::ResealDekCallback::callback_ix(&[
+            CallbackAccount { pubkey: ctx.accounts.listing_state.key(),  is_writable: false },
+            CallbackAccount { pubkey: ctx.accounts.purchase_record.key(), is_writable: true  },
+        ])],
+    )?;
     Ok(())
 }
